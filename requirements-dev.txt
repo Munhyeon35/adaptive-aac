@@ -1,0 +1,2 @@
+# Optional; the standard-library unittest runner needs no packages.
+pytest>=8,<10

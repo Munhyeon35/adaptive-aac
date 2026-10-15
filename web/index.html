@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#356757">
+  <meta name="description" content="그림으로 골라, 나의 말로 전하는 개인화 AAC">
+  <title>온말 · 나의 마음을 전해요</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#board">그림 선택으로 건너뛰기</a>
+  <div class="app-shell">
+    <header class="header">
+      <a class="brand" href="/" aria-label="온말 처음 화면"><span class="brand-icon" aria-hidden="true">온</span><span>온말<small>나의 마음을 전해요</small></span></a>
+      <div class="header-actions"><span class="local-tag"><i></i> 나만의 소통 공간</span><button id="history-open" class="quiet">지난 이야기</button><button id="settings-open" class="quiet" aria-label="설정 열기">⚙ <span>설정</span></button></div>
+    </header>
+    <main>
+      <section class="intro"><div><p class="eyebrow">작은 선택으로, 더 가까이</p><h1>어떤 이야기를 하고 싶나요?</h1><p>그림을 하나씩 골라 마음을 전해 보세요.</p></div><div class="intro-mark" aria-hidden="true">나의 말,<br><strong>나의 속도로.</strong><span>✳</span></div></section>
+      <div id="error" class="notice error" role="alert" hidden></div>
+      <div id="status" class="sr-only" role="status" aria-live="polite"></div>
+      <div class="workspace">
+        <section id="board" class="board" aria-labelledby="board-title" tabindex="-1">
+          <div class="board-top"><div><p class="eyebrow">01 · 그림 고르기</p><h2 id="board-title">지금 하고 싶은 말</h2></div><label class="context-label">지금은<select id="context"><option value="any">어떤 상황이든</option><option value="home">집에서</option><option value="school">학교에서</option><option value="meal">식사 시간</option></select></label></div>
+          <div class="modes" role="group" aria-label="선택 방식"><button id="mode-adaptive" aria-pressed="true">✦ 맞춤 추천</button><button id="mode-static" aria-pressed="false">기본 그림판</button></div>
+          <div id="categories" class="categories" role="group" aria-label="그림 분류"></div>
+          <div class="grid-caption"><span id="grid-title">이런 말부터 시작해 볼까요?</span><span id="source" class="source">기본 추천</span></div>
+          <div id="symbols" class="symbol-grid" aria-label="선택할 그림" aria-busy="true"><p>그림을 준비하고 있어요…</p></div>
+          <div class="board-controls"><button id="refresh" class="secondary">↻ 다른 그림 추천</button><button id="all-open" class="quiet">전체 그림 보기 <span aria-hidden="true">↗</span></button></div>
+          <p id="recommend-notice" class="subtle" role="status"></p>
+          <div class="board-tip"><span aria-hidden="true">✧</span><p>원하는 그림이 없어도 괜찮아요.<br><strong>전체 그림 보기</strong>에서 자유롭게 찾아보세요.</p></div>
+        </section>
+        <aside class="composer" aria-labelledby="composer-title">
+          <div class="composer-heading"><p class="eyebrow">02 · 마음 전하기</p><h2 id="composer-title">내가 고른 이야기</h2></div>
+          <div id="selected" class="selected" aria-label="선택한 그림"><div class="empty-selection"><span aria-hidden="true">💬</span><p>나의 이야기가<br>여기에 모여요.</p></div></div>
+          <div class="selection-controls"><span id="selection-count">0 / 12개</span><button id="undo" class="quiet" disabled>↶ 하나 취소</button><button id="clear" class="quiet" disabled>처음부터</button></div>
+          <button id="generate" class="primary full" disabled>✦ 문장으로 만들기</button>
+          <div id="sentence-panel" class="sentence-panel" hidden><label for="sentence">이렇게 전할까요? <span>직접 고칠 수도 있어요.</span></label><textarea id="sentence" maxlength="300" rows="3"></textarea><button id="confirm" class="primary full">이 문장으로 전달하기 →</button></div>
+          <p class="composer-note">내가 확인한 말만 전달해요.<br>천천히, 원하는 만큼 바꿔도 좋아요.</p>
+          <div class="small-flower" aria-hidden="true">✳</div>
+        </aside>
+      </div>
+      <footer><span>온말 <b>·</b> 당신의 모든 이야기를 응원해요</span><span>Personalized AAC · Research prototype</span></footer>
+    </main>
+  </div>
+  <dialog id="all-dialog" aria-labelledby="all-title"><div class="dialog-heading"><div><p class="eyebrow">자유롭게 찾아보세요</p><h2 id="all-title">전체 그림</h2></div><button class="close quiet" data-close="all-dialog" aria-label="전체 그림 닫기">✕</button></div><label class="search-label" for="search">그림 이름 검색</label><input id="search" type="search" placeholder="예: 빵, 화장실, 도와주세요" autocomplete="off"><div id="all-symbols" class="symbol-grid compact"></div><p id="all-count" class="subtle"></p></dialog>
+  <dialog id="output-dialog" aria-labelledby="output-title"><div class="dialog-heading"><h2 id="output-title">내 마음을 전해요</h2><button class="close quiet" data-close="output-dialog" aria-label="전달 화면 닫기">✕</button></div><div id="output-symbols" aria-hidden="true"></div><p id="output-text" class="output-text"></p><p id="save-status" class="subtle" role="status"></p><div class="output-actions"><button id="speak" class="primary">♪ 소리로 읽기</button><button id="stop-speech" class="secondary">읽기 멈추기</button><button id="new-message" class="quiet">새 이야기 시작</button></div><p id="speech-status" class="subtle" role="status"></p></dialog>
+  <dialog id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><h2 id="settings-title">나에게 맞추기</h2><button class="close quiet" data-close="settings-dialog" aria-label="설정 닫기">✕</button></div><form id="settings-form"><label for="profile-name">나의 이름</label><input id="profile-name" maxlength="30" required><label class="check-label"><input id="large-text" type="checkbox">글자와 그림을 더 크게 보기</label><label class="check-label"><input id="cloud-enabled" type="checkbox">AI 맞춤 추천 사용</label><p id="cloud-info" class="subtle">사용하면 선택한 그림, 상황, 최근 확정한 그림 순서를 OpenAI로 보내 추천을 받아요. 이름과 직접 쓴 문장은 보내지 않아요.</p><button class="primary full" type="submit">설정 저장</button><p id="settings-status" role="status" class="subtle"></p></form><div class="settings-data"><h3>내 이야기 기록</h3><p class="subtle">확정한 이야기는 이 컴퓨터에 저장되어 다음 추천에 반영돼요.</p><button id="export" class="secondary">기록 내려받기</button><button id="delete-history" class="quiet danger">기록 지우기</button><div id="delete-confirm" hidden><p>저장된 이야기와 학습된 사용 빈도를 모두 지울까요?</p><button id="delete-confirm-yes" class="secondary danger">모두 지우기</button><button id="delete-cancel" class="quiet">취소</button></div></div></dialog>
+  <dialog id="history-dialog" aria-labelledby="history-title"><div class="dialog-heading"><div><p class="eyebrow">내가 전한 마음들</p><h2 id="history-title">지난 이야기</h2></div><button class="close quiet" data-close="history-dialog" aria-label="지난 이야기 닫기">✕</button></div><div id="history-list"></div><details><summary>선택 방식별 기록 보기</summary><p class="subtle">실제 확정한 메시지의 평균입니다. 서로 다른 문장의 기록이므로 효과 비교 실험의 결과는 아닙니다.</p><div id="stats"></div></details></dialog>
+</body>
+</html>

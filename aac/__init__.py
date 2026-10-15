@@ -1,0 +1,1 @@
+"""Personalized AAC research prototype."""

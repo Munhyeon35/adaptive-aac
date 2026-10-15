@@ -1,0 +1,22 @@
+{
+  "kind": "synthetic-development-scenarios",
+  "notice": "Handwritten development examples, not participant data or clinical evidence.",
+  "scenarios": [
+    {"name": "빵 먹기", "symbols": ["eat", "bread"], "context": "meal"},
+    {"name": "밥 먹기", "symbols": ["eat", "rice"], "context": "meal"},
+    {"name": "물 마시기", "symbols": ["drink", "water"], "context": "any"},
+    {"name": "우유 마시기", "symbols": ["drink", "milk"], "context": "meal"},
+    {"name": "화장실 가기", "symbols": ["go", "bathroom"], "context": "any"},
+    {"name": "집에 가기", "symbols": ["go", "home"], "context": "school"},
+    {"name": "장난감 요청", "symbols": ["want", "toy"], "context": "home"},
+    {"name": "책 요청", "symbols": ["want", "book"], "context": "school"},
+    {"name": "배 아픔", "symbols": ["hurt", "stomach"], "context": "any"},
+    {"name": "머리 아픔", "symbols": ["hurt", "head"], "context": "any"},
+    {"name": "쉬기", "symbols": ["tired", "rest"], "context": "home"},
+    {"name": "추울 때 담요", "symbols": ["cold", "want", "blanket"], "context": "home"},
+    {"name": "더 마시기", "symbols": ["drink", "water", "more"], "context": "any"},
+    {"name": "먹기 거절", "symbols": ["eat", "bread", "not"], "context": "meal"},
+    {"name": "도움 요청", "symbols": ["help"], "context": "any"},
+    {"name": "감사", "symbols": ["thanks"], "context": "any"}
+  ]
+}
