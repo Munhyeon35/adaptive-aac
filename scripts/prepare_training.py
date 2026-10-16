@@ -32,13 +32,13 @@ def main():
     parser.add_argument("input", type=Path, help="Exported aac-interactions.json or synthetic scenarios.json")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    payload = json.loads(args.input.read_text())
+    payload = json.loads(args.input.read_text(encoding="utf-8"))
     records = payload.get("records", payload.get("scenarios"))
     if not isinstance(records, list):
         parser.error("Expected records or scenarios list")
     rows = list(examples(records))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
+    args.output.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
     print(f"Wrote {len(rows)} next-symbol examples to {args.output}. Review and split by participant/session before training.")
 
 

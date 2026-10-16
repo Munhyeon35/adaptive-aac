@@ -1,16 +1,17 @@
-"""Local MLX inference in a bounded, persistent worker process. No HTTP service needed."""
+"""Local inference in a bounded worker, using portable pipe I/O on every OS."""
 
 import atexit
 import json
 import os
 from pathlib import Path
-import select
+import queue
 import subprocess
 import sys
 import threading
 import time
 
 from .config import ROOT
+from .runtime import active_backend
 from .vocabulary import BY_ID
 
 MODEL_REPO = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
@@ -44,18 +45,25 @@ def parse_ids(text, candidates, limit=6):
     return ids
 
 
-class LocalMLXProvider:
+class LocalModelProvider:
     source = "local_llm"
 
-    def __init__(self, model_path, adapter_path=None, timeout=25):
+    def __init__(self, model_path, adapter_path=None, timeout=None, backend="mlx", device="auto", quantization="none"):
+        if backend not in {"mlx", "transformers"}:
+            raise ValueError("Unknown local inference backend")
+        if device not in {"auto", "cpu", "cuda"} or quantization not in {"none", "4bit"}:
+            raise ValueError("Invalid local model device or quantization")
+        self.backend, self.device, self.quantization = backend, device, quantization
         self.model_path = Path(model_path).resolve()
         self.adapter_path = Path(adapter_path).resolve() if adapter_path else None
         if not (self.model_path / "config.json").is_file():
             raise ValueError("Local model is not downloaded. Run setup_local.py first.")
-        if self.adapter_path and not (self.adapter_path / "adapters.safetensors").is_file():
+        weights = "adapters.safetensors" if backend == "mlx" else "adapter_model.safetensors"
+        if self.adapter_path and not (self.adapter_path / weights).is_file():
             raise ValueError("Local adapter file is missing.")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else (25 if backend == "mlx" else 120)
         self._process = None
+        self._responses = None
         self._lock = threading.Lock()
         self._retry_at = 0
         atexit.register(self.close)
@@ -63,12 +71,31 @@ class LocalMLXProvider:
     def _start(self):
         if self._process and self._process.poll() is None:
             return
-        command = [sys.executable, "-u", "-m", "aac.mlx_worker", "--model", str(self.model_path)]
+        module = "aac.mlx_worker" if self.backend == "mlx" else "aac.transformers_worker"
+        command = [sys.executable, "-u", "-m", module, "--model", str(self.model_path)]
+        if self.backend == "transformers":
+            command += ["--device", self.device, "--quantization", self.quantization]
         if self.adapter_path:
             command.extend(["--adapter", str(self.adapter_path)])
-        env = dict(os.environ, HF_HUB_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1", TOKENIZERS_PARALLELISM="false")
+        env = dict(os.environ, HF_HUB_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1", TOKENIZERS_PARALLELISM="false",
+                   PYTHONUTF8="1", PYTHONIOENCODING="utf-8", HF_HOME=str(ROOT / "var/huggingface"))
         self._process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL, env=env)
+        self._responses = queue.Queue(maxsize=1)
+        threading.Thread(target=self._read_output, args=(self._process.stdout, self._responses), daemon=True).start()
+
+    @staticmethod
+    def _read_output(stream, responses):
+        # select() cannot read subprocess pipes on Windows. One reader belongs to
+        # each worker; killing that worker unblocks it without contaminating a restart.
+        try:
+            while True:
+                line = stream.readline(16001)
+                responses.put_nowait(line)
+                if not line or len(line) > 16000:
+                    return
+        except (OSError, ValueError, queue.Full):
+            return
 
     def close(self):
         process, self._process = self._process, None
@@ -78,6 +105,7 @@ class LocalMLXProvider:
             process.wait()
             process.stdin.close()
             process.stdout.close()
+        self._responses = None
 
     def _generate(self, messages):
         if time.monotonic() < self._retry_at:
@@ -88,9 +116,13 @@ class LocalMLXProvider:
             self._start()
             self._process.stdin.write((json.dumps({"messages": messages}, ensure_ascii=False) + "\n").encode())
             self._process.stdin.flush()
-            if not select.select([self._process.stdout], [], [], self.timeout)[0]:
-                raise TimeoutError("Local generation timed out")
-            response = json.loads(self._process.stdout.readline(16001))
+            try:
+                line = self._responses.get(timeout=self.timeout)
+            except queue.Empty:
+                raise TimeoutError("Local generation timed out") from None
+            if not line or len(line) > 16000:
+                raise ValueError("Local worker closed or returned an oversized response")
+            response = json.loads(line)
             if not isinstance(response, dict) or "text" not in response:
                 raise ValueError("Local generation failed")
             return response["text"]
@@ -109,6 +141,10 @@ class LocalMLXProvider:
         return options[0]
 
 
+class LocalMLXProvider(LocalModelProvider):
+    """Backward-compatible name for existing MLX callers."""
+
+
 def configured_local_provider():
     mode = os.environ.get("AAC_LOCAL_MODEL", "auto")
     if mode == "off":
@@ -117,12 +153,14 @@ def configured_local_provider():
     if mode == "auto":
         if not manifest.exists():
             return None
-        config = json.loads(manifest.read_text())
-        return LocalMLXProvider(config["model_path"], config.get("adapter_path"))
+        config = json.loads(manifest.read_text(encoding="utf-8"))
+        return LocalModelProvider(config["model_path"], config.get("adapter_path"), backend=active_backend(),
+                                  device=os.environ.get("AAC_LOCAL_DEVICE", "auto"),
+                                  quantization=config.get("quantization", "none"))
     path = Path(mode)
     if not path.is_absolute():
         path = ROOT / path
     adapter = os.environ.get("AAC_LOCAL_ADAPTER")
     if adapter and not Path(adapter).is_absolute():
         adapter = str(ROOT / adapter)
-    return LocalMLXProvider(path, adapter)
+    return LocalModelProvider(path, adapter, backend=active_backend(), device=os.environ.get("AAC_LOCAL_DEVICE", "auto"))

@@ -46,11 +46,11 @@ def main():
     parser.add_argument("--input", type=Path, default=ROOT / "data/scenarios.json")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = evaluate(json.loads(args.input.read_text())["scenarios"])
+    result = evaluate(json.loads(args.input.read_text(encoding="utf-8"))["scenarios"])
     text = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(text + "\n")
+        args.output.write_text(text + "\n", encoding="utf-8")
     print(text)
 
 

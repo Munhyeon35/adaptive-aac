@@ -6,22 +6,23 @@
 
 ## 바로 실행
 
-Python **3.11 이상**만 있으면 됩니다. 런타임 패키지, Node.js, 빌드, API 키가 필요하지 않습니다.
+기본 그림판과 규칙 추천은 Windows·macOS·Linux에서 Python **3.11 이상**만 있으면 됩니다. 아래의 **로컬 모델 설치**를 완료하면 Qwen 추천을 사용합니다.
 
 ```bash
-cd /Users/mh/repository/adaptive-aac
-python3 run.py
+git clone https://github.com/Munhyeon35/adaptive-aac.git
+cd adaptive-aac
+python run.py
 ```
 
 브라우저에서 **http://localhost:8765**를 여세요. 종료는 `Ctrl+C`입니다.
 
-명령을 한 줄씩 실행하는 도구에서 `cd`가 다음 명령에 유지되지 않는다면, 아래 **한 명령**을 사용하세요. 어떤 폴더에서 실행해도 됩니다.
+macOS·Linux에서 `python` 명령이 없다면 `python3`, Windows에서는 `py -3.11`을 사용하세요. 비공개 저장소이므로 clone하려면 저장소 접근 권한이 필요합니다. 어떤 폴더에서든 자신의 clone 경로로 실행할 수 있습니다.
 
 ```bash
-python3 /Users/mh/repository/adaptive-aac/run.py
+python /path/to/adaptive-aac/run.py
 ```
 
-`run.py`는 MLX 전용 가상환경이 있으면 자동으로 사용합니다. 기본 기능에는 MLX 설치가 필요하지 않습니다.
+`run.py`는 활성 모델에 맞는 `.venv-mlx` 또는 `.venv-torch` 가상환경을 자동으로 사용합니다. 기본 기능에는 모델 설치가 필요하지 않습니다.
 
 1. `먹고 싶어요` → `빵`을 고릅니다.
 2. **문장으로 만들기**를 눌러 `빵을 먹고 싶어요.`를 확인합니다.
@@ -30,7 +31,7 @@ python3 /Users/mh/repository/adaptive-aac/run.py
 
 추천에 원하는 그림이 없으면 **다른 그림 추천**, 분류 탭, **전체 그림 보기**를 사용하세요. `처음부터`로 새 메시지를 시작하면 기본 그림판 모드로 전환할 수 있습니다.
 
-포트 충돌 시 `AAC_PORT=8766 python3 -m aac`로 실행합니다. 프로그램은 `127.0.0.1`에만 바인딩하므로 다른 기기에서는 접속할 수 없습니다.
+포트 충돌 시 `.env`에 `AAC_PORT=8766`을 설정하고 `python run.py`로 실행합니다. 프로그램은 `127.0.0.1`에만 바인딩하므로 다른 기기에서는 접속할 수 없습니다.
 
 ## 구현 기능
 
@@ -46,32 +47,49 @@ python3 /Users/mh/repository/adaptive-aac/run.py
 
 ## LLM 추천 연결
 
-### 로컬 Qwen 다운로드 + 파인튜닝 + 실행
+### 로컬 모델 설치: Qwen 다운로드 + 파인튜닝 + 실행
 
-Apple Silicon Mac에서 다음 명령을 실행합니다. 공개 모델과 패키지를 받기 위한 인터넷 연결, 로컬 GPU 실행 및 localhost 포트 사용 권한이 필요합니다.
+clone한 폴더에서 다음 명령을 실행합니다. 패키지와 공개 모델을 받는 동안 인터넷이 필요하며, 설치 후 추천은 로컬에서 동작합니다. API 키는 필요하지 않습니다.
 
 ```bash
-python3 /Users/mh/repository/adaptive-aac/setup_local.py --serve
+python setup_local.py --serve
 ```
 
-이 명령은 **Qwen2.5-0.5B-Instruct 4비트** 모델 다운로드, MLX 설치, 기본 80회 QLoRA 학습, 학습 전후 평가, 어댑터 활성화, AAC 서버 실행을 순서대로 수행합니다. 기본 데이터는 `scripts/synthetic_data.py`가 만드는 합성 문장 템플릿이며 실제 사용 기록을 자동으로 읽지 않습니다. API 키나 외부 학습 서비스는 사용하지 않습니다. 모델은 [MLX Community 모델 카드](https://huggingface.co/mlx-community/Qwen2.5-0.5B-Instruct-4bit), 학습 절차는 [MLX LM 공식 LoRA 안내](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/LORA.md)를 기준으로 연결했습니다.
+운영체제에 맞는 환경 설치, Qwen2.5-0.5B-Instruct 다운로드, 기본 80회 학습, 저장된 어댑터 재로딩·평가, 활성화, 서버 실행을 순서대로 수행합니다.
 
-모델과 어댑터는 `var/`, 학습 패키지는 `.venv-mlx/`에 저장합니다. 실행마다 별도의 `var/local-runs/<실행 ID>/`가 생겨 학습 로그, 패키지 버전, 모델 리비전, 데이터 분리 해시, 학습 전후 지표를 보존합니다. 단계가 실패하면 중단하고 새 모델을 활성화하지 않습니다. 학습 후 어휘 ID 검증을 통과하는 생성 결과가 최소 한 건 있어야 활성화하며, 이는 품질이나 효과가 검증되었다는 뜻이 아닙니다.
+| 환경 | 자동 선택 | 추론·학습 |
+| --- | --- | --- |
+| Apple Silicon Mac | MLX | 4비트 추론 + QLoRA |
+| Windows / Linux, CUDA 사용 가능 | Transformers + PyTorch + PEFT | NF4 4비트 추론 + QLoRA |
+| Windows / Linux, CUDA 없음 | Transformers + PyTorch + PEFT | CPU FP32 추론 + LoRA |
+| Intel Mac | Transformers + PyTorch 2.2.2 + PEFT | CPU FP32 추론 + LoRA; Python 3.11 또는 3.12 필요 |
+
+Windows·Linux는 우선 x86-64 환경을 대상으로 합니다. CUDA 사용 여부는 설치된 PyTorch와 드라이버로 판별합니다. CUDA를 사용하려면 [공식 PyTorch 설치 안내](https://pytorch.org/get-started/locally/)에 맞는 빌드를 `.venv-torch`에 설치해야 할 수 있습니다. CPU 학습은 GPU보다 느리고, FP32 모델은 4비트 모델보다 메모리를 더 사용합니다. 설치와 CUDA 문제 해결은 [로컬 모델 안내](docs/local-model.md)를 확인하세요.
+
+학습 자료는 `scripts/synthetic_data.py`가 만드는 합성 문장 템플릿입니다. 실제 사용 기록을 자동으로 읽지 않습니다. MLX 어댑터와 PEFT 어댑터는 서로 다른 형식이며, 다른 사람이 clone하면 자신의 백엔드에서 새로 학습합니다. 현재 학습 가중치를 배포하는 기능은 포함하지 않습니다.
+
+모델과 어댑터는 `var/`, 패키지는 `.venv-mlx/` 또는 `.venv-torch/`에 저장합니다. 모두 Git에서 제외됩니다. 실행마다 별도의 `var/local-runs/<실행 ID>/`가 생겨 학습 로그, 패키지 버전, 모델 리비전, 데이터 분리 해시, 학습 전후 지표를 보존합니다. 실패하면 중단하고 새 모델을 활성화하지 않습니다. 저장된 어댑터로 유효한 추천을 최소 한 건 생성해야 활성화하며, 이는 품질이나 효과가 검증되었다는 뜻이 아닙니다.
 
 학습한 모델은 다음 실행부터 자동으로 사용되고 추천 표시가 **내 기기 AI 추천**으로 바뀝니다. 응답이 잘못되거나 오래 걸리면 기본 추천으로 돌아갑니다. 클라우드 추천을 명시적으로 켜면 해당 설정이 우선합니다. 문장은 기존의 의도 보존 규칙으로 조합하고 로컬 모델은 다음 그림 예측에 사용합니다.
 
 ```bash
 # 데이터 준비만 실행 (다운로드/학습 없음)
-python3 setup_local.py --prepare-only
+python setup_local.py --prepare-only
+
+# CPU 환경을 명시해 설치·학습·실행 (Apple Silicon에서도 가능)
+python setup_local.py --backend transformers --device cpu --training lora --serve
+
+# 이미 CUDA PyTorch가 설치된 환경에서 QLoRA 실행
+python setup_local.py --backend transformers --device cuda --training qlora --serve
 
 # 검토한 내보내기 자료로 실제 로컬 학습
-python3 setup_local.py --data /path/to/aac-interactions.json --iters 100
+python setup_local.py --data /path/to/aac-interactions.json --iters 100
 
-# 기존 모델을 유지하고 규칙 추천만 실행
-AAC_LOCAL_MODEL=off python3 run.py
+# 기존 활성 모델을 바꾸지 않고 다른 백엔드를 학습·평가
+python setup_local.py --backend transformers --device cpu --no-activate
 ```
 
-**이 작업 환경에서의 실행 결과:** 네트워크 제한으로 MLX 패키지 설치가 실패해 모델 다운로드와 실제 가중치 학습은 완료되지 않았습니다. 연결 코드·학습 실행 도구·데이터 분리는 구현되었지만 학습된 어댑터는 아직 없습니다. 다운로드가 가능한 Mac 터미널에서 위 명령을 실행해야 이어 진행됩니다. 자세한 내용은 [로컬 모델 안내](docs/local-model.md)를 확인하세요.
+설치가 완료된 다음부터는 `python run.py`만 실행하면 됩니다. 기본 주소는 `http://localhost:8765`이고 모델 추천은 **내 기기 AI 추천**으로 표시됩니다. 규칙 추천만 쓰려면 `.env`에 `AAC_LOCAL_MODEL=off`를 설정하세요. 최초 설치는 패키지·모델 다운로드 때문에 더 오래 걸릴 수 있습니다.
 
 ### 선택적 클라우드 추천
 

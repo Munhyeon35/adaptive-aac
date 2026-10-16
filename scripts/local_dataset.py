@@ -35,7 +35,7 @@ def prompt_key(example):
 
 
 def prepare_splits(input_path, output_dir, seed=42):
-    payload = json.loads(Path(input_path).read_text())
+    payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
     records = payload.get("records", payload.get("scenarios"))
     if not isinstance(records, list):
         raise ValueError("Expected records or scenarios")
@@ -64,12 +64,12 @@ def prepare_splits(input_path, output_dir, seed=42):
     hashes = {}
     for split, rows in outputs.items():
         content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-        (output / f"{split}.jsonl").write_text(content)
+        (output / f"{split}.jsonl").write_text(content, encoding="utf-8")
         hashes[split] = hashlib.sha256(content.encode()).hexdigest()
     manifest = {"kind": payload.get("kind", "reviewed-user-export"), "seed": seed,
                 "source_records": len(records), "family_counts": {k: len(v) for k, v in assignments.items()},
                 "example_counts": {k: len(v) for k, v in outputs.items()}, "shared_prompts_removed": dropped,
                 "sha256": hashes,
                 "notice": "Development-only split by first two symbols, not a participant-held-out clinical evaluation."}
-    (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return manifest

@@ -1,5 +1,6 @@
 from io import BytesIO
 import json
+import queue
 from pathlib import Path
 import tempfile
 import unittest
@@ -73,8 +74,9 @@ class LocalModelTests(unittest.TestCase):
 
         process = Process()
         self.provider._process = process
-        with patch("aac.local_model.select.select", return_value=([], [], [])):
-            self.assertEqual(recommend(["eat"], provider=self.provider)["source"], "fallback")
+        self.provider._responses = queue.Queue()
+        self.provider.timeout = 0.01
+        self.assertEqual(recommend(["eat"], provider=self.provider)["source"], "fallback")
         self.assertTrue(process.killed)
         self.assertIsNone(self.provider._process)
 
@@ -102,7 +104,7 @@ class TrainingDataTests(unittest.TestCase):
             self.assertEqual(one["sha256"], two["sha256"])
             seen = set()
             for split in ("train", "valid", "test"):
-                rows = [json.loads(line) for line in (root / f"one/{split}.jsonl").read_text().splitlines()]
+                rows = [json.loads(line) for line in (root / f"one/{split}.jsonl").read_text(encoding="utf-8").splitlines()]
                 self.assertGreater(len(rows), 0)
                 for row in rows:
                     key = prompt_key(row)

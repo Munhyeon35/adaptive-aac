@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false, localModelAvailable: false,
+  recommendationTimeout: 35000,
   selected: [], recommendations: [], excluded: [], category: null, context: "any",
   mode: "adaptive", page: 0, clicks: 0, started: null, revision: 0, request: 0,
   messageId: crypto.randomUUID(), saved: false, generating: false, confirming: false,
@@ -22,7 +23,7 @@ function persist(key, value) { try { localStorage.setItem(key, value); } catch {
 
 async function api(path, body) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), path === "/api/recommend" ? 35000 : 12000);
+  const timeout = setTimeout(() => controller.abort(), path === "/api/recommend" ? state.recommendationTimeout : 12000);
   try {
     const response = await fetch(path, {
       method: body === undefined ? "GET" : "POST",
@@ -327,6 +328,7 @@ async function start() {
     state.vocabulary = bootstrap.vocabulary; state.categories = bootstrap.categories;
     state.byId = new Map(state.vocabulary.map((symbol) => [symbol.id, symbol])); state.cloudAvailable = bootstrap.cloud_available;
     state.localModelAvailable = bootstrap.local_model_available;
+    state.recommendationTimeout = bootstrap.recommendation_timeout_ms || 35000;
     const profileId = stored("aac.profile");
     if (profileId) {
       state.profile = {id: profileId};

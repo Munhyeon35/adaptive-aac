@@ -37,7 +37,8 @@ class Application:
     def handle(self, method, path, body, profile_id):
         if method == "GET" and path == "/api/bootstrap":
             return {"vocabulary": VOCABULARY, "categories": CATEGORIES, "cloud_available": bool(self.provider),
-                    "local_model_available": bool(self.local_provider)}
+                    "local_model_available": bool(self.local_provider),
+                    "recommendation_timeout_ms": max(35000, int(getattr(self.local_provider, "timeout", 25) * 1000) + 5000)}
         if method == "POST" and path == "/api/profiles":
             return self.store.create_profile(name_value(body.get("name", "나")))
         profile = self.store.profile(profile_id)

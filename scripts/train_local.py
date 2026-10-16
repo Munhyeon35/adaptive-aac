@@ -40,6 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--iters", type=int, default=80)
+    parser.add_argument("--no-activate", action="store_true")
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     state = {"stage": "import_dependencies", "state": "running", "training_completed": False,
@@ -101,13 +102,14 @@ def main():
         (run_dir / "after.json").write_text(json.dumps(after, ensure_ascii=False, indent=2) + "\n")
         if after["valid_output_rate"] == 0:
             raise RuntimeError("Training completed but all validation generations were invalid; adapter not activated. Inspect training.log and after.json.")
-        active = {"model_repo": MODEL_REPO, "model_revision": revision, "model_path": str(model_path),
+        active = {"backend": "mlx", "model_repo": MODEL_REPO, "model_revision": revision, "model_path": str(model_path),
                   "adapter_path": str(adapter), "mlx_lm_version": importlib.metadata.version("mlx-lm"),
                   "trained_at": datetime.now(timezone.utc).isoformat(), "run_dir": str(run_dir)}
-        temporary = ROOT / "var/active-model.json.tmp"
-        temporary.write_text(json.dumps(active, ensure_ascii=False, indent=2) + "\n")
-        temporary.replace(ROOT / "var/active-model.json")
-        status(state="completed", stage="activated")
+        if not args.no_activate:
+            temporary = ROOT / "var/active-model.json.tmp"
+            temporary.write_text(json.dumps(active, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(ROOT / "var/active-model.json")
+        status(state="completed", stage="evaluated" if args.no_activate else "activated")
         print(f"Before hit@6={before['hit_at_6']:.3f}; after hit@6={after['hit_at_6']:.3f}. Synthetic development examples only.", flush=True)
     except Exception as error:
         status(state="failed", error=str(error))
