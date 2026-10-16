@@ -1,7 +1,10 @@
-.PHONY: run test evaluate training check
+.PHONY: run test evaluate training local-model check
 
 run:
-	python3 -m aac
+	python3 run.py
+
+local-model:
+	python3 setup_local.py --serve
 
 test:
 	python3 -m unittest discover -s tests -v

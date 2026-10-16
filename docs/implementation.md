@@ -13,7 +13,7 @@
 | Recommendation Refresh | 기존 문맥 유지, 직전 추천 제외, 전체 순회 후 처음으로 | `aac/prediction.py`, `web/app.js` |
 | Personalized Prediction | 확정된 그림 순서와 빈도 기반 개인화, 프로필별 분리 | `aac/storage.py` |
 | Prompt-Based Alignment | 제한 어휘·사용자 주도·문맥 데이터를 구분하는 프롬프트 | `aac/llm.py` |
-| Fine-Tuning | JSONL 준비·개인정보 축소·평가 계획; 실제 학습 미실행 | `scripts/prepare_training.py` |
+| Fine-Tuning | JSONL 준비, 로컬 Qwen 다운로드·QLoRA 실행·전후 평가·어댑터 연결; 실제 학습은 설치 제한으로 미완료 | `setup_local.py`, `scripts/train_local.py` |
 | Evaluation | 고정 그림판, 실제 상호작용 집계, 합성 시뮬레이션 | `scripts/evaluate.py` |
 
 ## 데이터 흐름
@@ -56,7 +56,7 @@ flowchart LR
 | GET | `/api/export` | 최대 10,000개 메시지, 직접 쓴 문장 포함, 프로필 ID 제외 |
 | POST | `/api/history/clear` | 현재 프로필의 저장 이력 삭제 |
 
-`context`: `any`, `home`, `school`, `meal`. `mode`: `adaptive`, `static`. `source`: `local`, `llm`, `fallback`. 선택 그림은 중복 없이 최대 12개, 확정 문장은 최대 300자입니다. 생성과 추천은 이력을 저장하지 않습니다. 메시지 UUID는 재시도 시 중복 저장을 방지합니다.
+`context`: `any`, `home`, `school`, `meal`. `mode`: `adaptive`, `static`. `source`: `local`(규칙), `llm`(클라우드), `local_llm`(로컬 모델), `fallback`. 선택 그림은 중복 없이 최대 12개, 확정 문장은 최대 300자입니다. 생성과 추천은 이력을 저장하지 않습니다. 메시지 UUID는 재시도 시 중복 저장을 방지합니다.
 
 ## 로컬 데이터 경계
 
@@ -65,5 +65,5 @@ flowchart LR
 - 프로필 ID는 로컬 브라우저의 bearer token처럼 사용됩니다. 프로덕션 인증 체계는 아닙니다.
 - SQL은 매개변수화하고 사용자 문자열은 DOM의 `textContent`/`value`로 표시합니다.
 - LLM 연결 실패는 규칙 추천으로 돌아갑니다. API 서버 연결이 끊겼을 때 이미 불러온 전체 어휘는 탐색할 수 있지만 문장 생성/저장은 서버가 필요합니다.
-- 요청 본문 20KB, 모델 응답 128KB, 공급자 호출 8초, 브라우저 요청 12초로 제한합니다.
+- 요청 본문 20KB, 클라우드 모델 응답 128KB·호출 8초, 로컬 모델 생성 25초, 브라우저 추천 요청 35초·다른 요청 12초로 제한합니다.
 - 사용 기록·키·생성물은 Git에서 제외합니다. 데이터 이동과 학습 제출은 사용자 작업으로 남겨 둡니다.

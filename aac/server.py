@@ -31,16 +31,17 @@ def name_value(value):
 
 
 class Application:
-    def __init__(self, store, provider=None):
-        self.store, self.provider = store, provider
+    def __init__(self, store, provider=None, local_provider=None):
+        self.store, self.provider, self.local_provider = store, provider, local_provider
 
     def handle(self, method, path, body, profile_id):
         if method == "GET" and path == "/api/bootstrap":
-            return {"vocabulary": VOCABULARY, "categories": CATEGORIES, "cloud_available": bool(self.provider)}
+            return {"vocabulary": VOCABULARY, "categories": CATEGORIES, "cloud_available": bool(self.provider),
+                    "local_model_available": bool(self.local_provider)}
         if method == "POST" and path == "/api/profiles":
             return self.store.create_profile(name_value(body.get("name", "나")))
         profile = self.store.profile(profile_id)
-        provider = self.provider if profile["cloud_enabled"] else None
+        provider = self.provider if profile["cloud_enabled"] and self.provider else self.local_provider
         if method == "GET" and path == "/api/profile":
             return profile
         if method == "POST" and path == "/api/profile":
@@ -165,12 +166,17 @@ def main():
     load_env()
     key = os.environ.get("OPENAI_API_KEY", "")
     provider = OpenAIProvider(key, os.environ.get("OPENAI_MODEL", "gpt-4o-mini")) if key else None
+    from .local_model import configured_local_provider
+    try:
+        local_provider = configured_local_provider()
+    except (OSError, ValueError, KeyError) as error:
+        raise SystemExit(f"Local model configuration error: {error}") from None
     path = Path(os.environ.get("AAC_DB_PATH", "var/aac.sqlite3"))
     if not path.is_absolute():
         path = ROOT / path
     port = int(os.environ.get("AAC_PORT", "8765"))
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(Application(Store(path), provider)))
+        server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(Application(Store(path), provider, local_provider)))
     except OSError as error:
         raise SystemExit(f"Cannot open localhost:{port}: {error}. Check local server permissions or set AAC_PORT to another port.") from None
     print(f"Adaptive AAC: http://localhost:{server.server_port}", flush=True)
@@ -181,3 +187,5 @@ def main():
         pass
     finally:
         server.server_close()
+        if local_provider:
+            local_provider.close()

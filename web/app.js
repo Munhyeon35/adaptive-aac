@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const state = {
-  vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false,
+  vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false, localModelAvailable: false,
   selected: [], recommendations: [], excluded: [], category: null, context: "any",
   mode: "adaptive", page: 0, clicks: 0, started: null, revision: 0, request: 0,
   messageId: crypto.randomUUID(), saved: false, generating: false, confirming: false,
@@ -22,7 +22,7 @@ function persist(key, value) { try { localStorage.setItem(key, value); } catch {
 
 async function api(path, body) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), path === "/api/recommend" ? 35000 : 12000);
   try {
     const response = await fetch(path, {
       method: body === undefined ? "GET" : "POST",
@@ -155,7 +155,7 @@ async function updateBoard() {
     if (request !== state.request) return;
     state.recommendations = result.symbols.map((s) => s.id);
     renderGrid(result.symbols);
-    $("source").textContent = result.source === "llm" ? "AI 맞춤 추천" : "기본 맞춤 추천";
+    $("source").textContent = result.source === "local_llm" ? "내 기기 AI 추천" : result.source === "llm" ? "클라우드 AI 추천" : "기본 맞춤 추천";
     $("recommend-notice").textContent = result.notice || "";
     $("refresh").textContent = result.remaining ? "↻ 다른 그림 추천" : "↻ 첫 추천 다시 보기";
     $("refresh").disabled = false;
@@ -294,7 +294,7 @@ function bind() {
   $("settings-open").addEventListener("click", () => {
     $("profile-name").value = state.profile.name; $("cloud-enabled").checked = state.profile.cloud_enabled;
     $("cloud-enabled").disabled = !state.cloudAvailable; $("large-text").checked = document.documentElement.classList.contains("large");
-    $("settings-status").textContent = state.cloudAvailable ? "" : "AI 추천을 사용하려면 서버의 .env에 API 키를 설정해 주세요.";
+    $("settings-status").textContent = state.localModelAvailable ? "로컬 AI가 설정되어 있어요. 아래 설정은 클라우드 AI 사용 여부예요." : state.cloudAvailable ? "" : "로컬 모델 설치 전에는 기본 추천을 사용해요.";
     $("delete-confirm").hidden = true; $("settings-dialog").showModal();
   });
   $("settings-form").addEventListener("submit", async (event) => {
@@ -326,6 +326,7 @@ async function start() {
     const bootstrap = await api("/api/bootstrap");
     state.vocabulary = bootstrap.vocabulary; state.categories = bootstrap.categories;
     state.byId = new Map(state.vocabulary.map((symbol) => [symbol.id, symbol])); state.cloudAvailable = bootstrap.cloud_available;
+    state.localModelAvailable = bootstrap.local_model_available;
     const profileId = stored("aac.profile");
     if (profileId) {
       state.profile = {id: profileId};

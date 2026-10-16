@@ -64,7 +64,7 @@ def generate_sentence(selected, provider=None):
     options = sentence_options(selected)
     source = "local"
     sentence = options[0]
-    if provider and len(options) > 1:
+    if provider and getattr(provider, "source", "llm") != "local_llm" and len(options) > 1:
         try:
             chosen = provider.sentence(selected, options)
             if chosen not in options:

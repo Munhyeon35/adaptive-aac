@@ -52,7 +52,7 @@ def recommend(selected, history=(), category=None, context="any", excluded=(), l
                     or len(proposed) != len(set(proposed))):
                 raise ValueError("Invalid model recommendations")
             candidates = proposed + [i for i in candidates if i not in proposed]
-            source = "llm"
+            source = getattr(provider, "source", "llm")
         except (ValueError, OSError, TimeoutError, KeyError, TypeError):
             source, reason = "fallback", "추천 연결이 잠시 어려워 기본 추천을 보여드려요."
     return {"symbols": [BY_ID[i] for i in candidates[:limit]], "source": source,

@@ -1,0 +1,2 @@
+# Apple Silicon inference + QLoRA. Dependencies are frozen in each training run.
+mlx-lm[train]==0.32.1
