@@ -1,6 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const INITIAL_SYMBOL_IDS = ["eat", "drink", "go", "help", "hungry", "thirsty", "hurt", "tired", "rice", "bread", "water", "bathroom", "home", "school", "yes", "no"];
+
 const state = {
   vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false, localModelAvailable: false,
   recommendationTimeout: 35000,
@@ -126,6 +128,7 @@ function renderSelected() {
 
 function renderGrid(symbols) {
   const focusedId = $("symbols").contains(document.activeElement) ? document.activeElement.dataset.symbol : null;
+  $("symbols").classList.toggle("initial-grid", state.mode === "adaptive" && state.selected.length === 0 && state.category === null);
   $("symbols").replaceChildren(...symbols.map((symbol) => symbolButton(symbol, state.mode === "static")));
   if (!symbols.length) $("symbols").append(node("p", "empty-grid", "이 분류의 그림을 모두 봤어요.\n다른 분류나 전체 그림을 선택해 보세요."));
   $("symbols").setAttribute("aria-busy", "false");
@@ -139,6 +142,14 @@ async function updateBoard() {
   const request = ++state.request;
   $("grid-title").textContent = state.selected.length ? "다음으로 어떤 말을 더할까요?" : "이런 말부터 시작해 볼까요?";
   $("recommend-notice").textContent = "";
+  if (state.mode === "adaptive" && state.selected.length === 0 && state.category === null) {
+    const initialSymbols = INITIAL_SYMBOL_IDS.map((id) => state.byId.get(id)).filter(Boolean);
+    renderGrid(initialSymbols);
+    $("source").textContent = "생활 핵심 그림 · 16개";
+    $("refresh").textContent = "↻ 핵심 그림 다시 보기";
+    $("refresh").disabled = true;
+    return;
+  }
   if (state.mode === "static") {
     const available = state.vocabulary.filter((s) => !state.category || s.category === state.category);
     const pages = Math.max(1, Math.ceil(available.length / 6));
@@ -261,7 +272,45 @@ async function openHistory() {
   } catch (error) { $("history-list").textContent = error.message; }
 }
 
+function setAuthMode(mode) {
+  const signup = mode === "signup";
+  $("auth-title").textContent = signup ? "회원가입" : "로그인";
+  $("auth-login-tab").setAttribute("aria-pressed", String(!signup));
+  $("auth-signup-tab").setAttribute("aria-pressed", String(signup));
+  $("auth-name-field").hidden = !signup;
+  $("auth-confirm-field").hidden = !signup;
+  $("auth-name").disabled = !signup;
+  $("auth-password-confirm").disabled = !signup;
+  $("auth-name").required = signup;
+  $("auth-password-confirm").required = signup;
+  $("auth-password").autocomplete = signup ? "new-password" : "current-password";
+  $("auth-submit").textContent = signup ? "회원가입" : "로그인";
+  $("auth-status").textContent = "";
+  $("auth-form").reset();
+}
+
+function bindAuth() {
+  $("auth-open").addEventListener("click", () => {
+    setAuthMode("login");
+    $("auth-dialog").showModal();
+    $("auth-email").focus();
+  });
+  $("auth-login-tab").addEventListener("click", () => setAuthMode("login"));
+  $("auth-signup-tab").addEventListener("click", () => setAuthMode("signup"));
+  $("auth-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const signup = $("auth-signup-tab").getAttribute("aria-pressed") === "true";
+    if (signup && $("auth-password").value !== $("auth-password-confirm").value) {
+      $("auth-status").textContent = "비밀번호가 서로 일치하지 않아요.";
+      $("auth-password-confirm").focus();
+      return;
+    }
+    $("auth-status").textContent = "화면 입력 확인 완료. 실제 계정 기능은 백엔드 API 연동 후 사용할 수 있어요.";
+  });
+}
+
 function bind() {
+  bindAuth();
   $("undo").addEventListener("click", () => { if (state.selected.length) remove(state.selected.at(-1)); });
   $("clear").addEventListener("click", reset);
   $("generate").addEventListener("click", generate);
