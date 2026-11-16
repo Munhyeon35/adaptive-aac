@@ -61,7 +61,34 @@ _ROWS = [
     ("play", "놀고 싶어요", "🪁", "action", ["toy", "outside"]),
 ]
 
-VOCABULARY = [dict(id=i, label=l, icon=e, category=c, tags=t) for i, l, e, c, t in _ROWS]
+# Keep original 47 IDs and recommendation semantics unchanged. SVG is a presentation field.
+SVG_SYMBOLS = {'drink': 'drink_,_to', 'rice': 'rice', 'bread': 'bread', 'banana': 'banana', 'egg': 'egg', 'milk': 'milk', 'tea': 'tea', 'school': 'school', 'hungry': 'hungry', 'thirsty': 'thirsty', 'happy': 'happy_lady', 'sad': 'sad_lady', 'stomach': 'stomach', 'head': 'head', 'more': 'more'}
+VOCABULARY = [dict(id=i, label=l, icon=e, category=c, tags=t,
+                   image=("/symbols/" + SVG_SYMBOLS[i] + ".svg") if i in SVG_SYMBOLS else None)
+              for i, l, e, c, t in _ROWS]
+
+# Mulberry vocabulary: categories will be assigned after the team meeting.
+# Keep original 47 IDs stable for history, sentence rules and compatibility.
+import csv
+from pathlib import Path
+
+def _load_mulberry():
+    path = Path(__file__).with_name("mulberry_symbols.csv")
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        records = list(csv.DictReader(stream))
+    result = []
+    for record in records:
+        stem = record["symbol"]
+        label = record["label_ko"].strip()
+        if not label:
+            raise ValueError("Mulberry symbol label is empty: " + stem)
+        result.append(dict(id="mulberry:" + stem, label=label, icon="",
+                           category=None, tags=[], searchText=record["tags_ko"],
+                           image=record["image"]))
+    return result
+
+VOCABULARY.extend(_load_mulberry())
+
 BY_ID = {symbol["id"]: symbol for symbol in VOCABULARY}
 CATEGORY_IDS = {category["id"] for category in CATEGORIES}
 STARTERS = ["eat", "drink", "go", "want", "hurt", "help"]
