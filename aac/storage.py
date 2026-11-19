@@ -23,10 +23,14 @@ class Store:
                     id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
                     symbols TEXT NOT NULL, sentence TEXT NOT NULL, mode TEXT NOT NULL,
                     context TEXT NOT NULL, selection_count INTEGER NOT NULL,
-                    elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL
+                    elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL, cards_seen INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS messages_by_profile ON messages(profile_id, created_at DESC);
             """)
+            # Serialize the schema check and migration if multiple processes open an old store.
+            db.execute("BEGIN IMMEDIATE")
+            if "cards_seen" not in {row["name"] for row in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages ADD COLUMN cards_seen INTEGER")
 
     @contextmanager
     def connect(self):
@@ -62,17 +66,18 @@ class Store:
             rows = db.execute("SELECT * FROM messages WHERE profile_id=? ORDER BY created_at DESC LIMIT ?", (profile_id, limit)).fetchall()
         return [dict(row, symbols=json.loads(row["symbols"])) for row in rows]
 
-    def confirm(self, profile_id, message_id, symbols, sentence, mode, context, selection_count, elapsed_ms):
+    def confirm(self, profile_id, message_id, symbols, sentence, mode, context, selection_count, elapsed_ms,
+                cards_seen=None):
         with self.connect() as db:
             # Idempotency prevents a double click or retry from duplicating learning data.
             existing = db.execute("SELECT profile_id FROM messages WHERE id=?", (message_id,)).fetchone()
             if existing and existing["profile_id"] != profile_id:
                 raise ValueError("메시지 식별자가 중복되었습니다.")
             db.execute("""INSERT OR IGNORE INTO messages
-                (id, profile_id, symbols, sentence, mode, context, selection_count, elapsed_ms, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (id, profile_id, symbols, sentence, mode, context, selection_count, elapsed_ms, created_at, cards_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                        (message_id, profile_id, json.dumps(symbols), sentence, mode, context,
-                        selection_count, elapsed_ms, datetime.now(timezone.utc).isoformat()))
+                        selection_count, elapsed_ms, datetime.now(timezone.utc).isoformat(), cards_seen))
         return {"id": message_id, "saved": True}
 
     def clear_history(self, profile_id):
@@ -83,6 +88,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute("""SELECT mode, count(*) AS messages,
                 round(avg(selection_count), 2) AS average_selections,
-                round(avg(elapsed_ms)/1000.0, 2) AS average_seconds
+                round(avg(elapsed_ms)/1000.0, 2) AS average_seconds,
+                round(avg(cards_seen), 2) AS average_cards_seen, count(cards_seen) AS measured_messages
                 FROM messages WHERE profile_id=? GROUP BY mode""", (profile_id,)).fetchall()
         return [dict(row) for row in rows]

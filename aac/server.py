@@ -86,9 +86,12 @@ class Application:
                 message_id = str(uuid.UUID(message_id))
             except (ValueError, TypeError, AttributeError):
                 raise ValueError("메시지 식별자를 확인해 주세요.") from None
+            cards_seen = body.get("cards_seen")
+            if cards_seen is not None:
+                cards_seen = bounded_int(cards_seen, 0, 1000000)
             return self.store.confirm(profile_id, message_id, selected, sentence.strip(), mode, context,
                                       bounded_int(body.get("selection_count"), len(selected), 10000),
-                                      bounded_int(body.get("elapsed_ms"), 0, 86400000))
+                                      bounded_int(body.get("elapsed_ms"), 0, 86400000), cards_seen=cards_seen)
         raise FileNotFoundError("요청한 기능을 찾을 수 없어요.")
 
 

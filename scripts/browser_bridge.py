@@ -1,5 +1,6 @@
 """Browser-test transport: serve the real HTTP handler over stdin/stdout, no TCP."""
 
+import argparse
 import base64
 from io import BytesIO
 import json
@@ -8,6 +9,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
+from aac.local_model import LocalModelProvider
 from aac.server import Application, make_handler
 from aac.storage import Store
 
@@ -23,9 +25,9 @@ class MemorySocket:
         self.output.write(data)
 
 
-def main():
+def serve(local_provider):
     with tempfile.TemporaryDirectory(prefix="aac-browser-") as directory:
-        handler = make_handler(Application(Store(Path(directory) / "browser.sqlite3")))
+        handler = make_handler(Application(Store(Path(directory) / "browser.sqlite3"), local_provider=local_provider))
         for line in sys.stdin:
             request = json.loads(line)
             payload = request.get("body", "").encode()
@@ -40,6 +42,23 @@ def main():
                 {"name": item.split(":", 1)[0], "value": item.split(":", 1)[1].strip()} for item in lines[1:]],
                 "body": base64.b64encode(body).decode()}
             print(json.dumps(output), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--local-manifest", type=Path)
+    args = parser.parse_args()
+    provider = None
+    if args.local_manifest:
+        config = json.loads(args.local_manifest.read_text(encoding="utf-8"))
+        provider = LocalModelProvider(config["model_path"], config.get("adapter_path"),
+                                      backend=config.get("backend", "mlx"), device=config.get("device", "auto"),
+                                      quantization=config.get("quantization", "none"))
+    try:
+        serve(provider)
+    finally:
+        if provider:
+            provider.close()
 
 
 if __name__ == "__main__":

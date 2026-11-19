@@ -1,6 +1,7 @@
 from io import BytesIO
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -51,12 +52,54 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.call("GET", "/api/history")["messages"], [])
         message = dict(selection, id=str(uuid.uuid4()), sentence=sentence, selection_count=2, elapsed_ms=2500)
         self.call("POST", "/api/confirm", message)
-        self.call("POST", "/api/confirm", message)
+        self.call("POST", "/api/confirm", dict(message, id=str(uuid.uuid4()), cards_seen=18))
+        self.call("POST", "/api/confirm", dict(message, cards_seen=99))
         export = self.call("GET", "/api/export")
-        self.assertEqual(len(export["records"]), 1)
+        self.assertEqual(len(export["records"]), 2)
         self.assertNotIn("profile_id", export["records"][0])
+        self.assertCountEqual([record["cards_seen"] for record in export["records"]], [None, 18])
+        stats, = self.call("GET", "/api/history")["stats"]
+        self.assertEqual(stats["average_cards_seen"], 18)
+        self.assertEqual(stats["measured_messages"], 1)
+        self.assertEqual(stats["average_seconds"], 2.5)
         self.call("POST", "/api/history/clear")
         self.assertEqual(self.call("GET", "/api/history")["messages"], [])
+
+    def test_cards_seen_validation(self):
+        message = dict(selected=["eat"], id=str(uuid.uuid4()), sentence="먹고 싶어요.",
+                       selection_count=1, elapsed_ms=100)
+        for value in (-1, 1000001, True, 3.0, "3"):
+            with self.subTest(value=value):
+                status, _, _ = self.http("/api/confirm", "POST", dict(message, cards_seen=value))
+                self.assertEqual(status, 400)
+        self.assertEqual(self.call("GET", "/api/history")["messages"], [])
+
+    def test_existing_database_migrates_without_inventing_card_counts(self):
+        path = Path(self.tmp.name) / "legacy.sqlite3"
+        db = sqlite3.connect(path)
+        try:
+            db.executescript("""
+                CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                    cloud_enabled INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE messages (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
+                    symbols TEXT NOT NULL, sentence TEXT NOT NULL, mode TEXT NOT NULL,
+                    context TEXT NOT NULL, selection_count INTEGER NOT NULL,
+                    elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL);
+                INSERT INTO profiles (id, name) VALUES ('legacy', '나');
+                INSERT INTO messages VALUES ('legacy-message', 'legacy', '["help"]', '도와주세요.',
+                    'static', 'any', 1, 4000, '2026-01-01');
+            """)
+        finally:
+            db.close()
+        Store(path)
+        reopened = Store(path)
+        old, = reopened.history("legacy")
+        self.assertEqual(old["sentence"], "도와주세요.")
+        self.assertEqual(old["elapsed_ms"], 4000)
+        self.assertIsNone(old["cards_seen"])
+        stats, = reopened.stats("legacy")
+        self.assertIsNone(stats["average_cards_seen"])
+        self.assertEqual(stats["measured_messages"], 0)
 
     def test_no_cloud_calls_without_profile_opt_in(self):
         class Bomb:

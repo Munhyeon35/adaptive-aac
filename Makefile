@@ -1,4 +1,4 @@
-.PHONY: run test evaluate training local-model check
+.PHONY: run test evaluate evaluate-agent training local-model check
 
 run:
 	python3 run.py
@@ -11,6 +11,9 @@ test:
 
 evaluate:
 	python3 -m scripts.evaluate --output artifacts/evaluation.json
+
+evaluate-agent:
+	node scripts/evaluate-agent.mjs --output artifacts/agent-evaluation.json
 
 training:
 	python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synthetic-training.jsonl

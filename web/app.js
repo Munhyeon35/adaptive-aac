@@ -6,8 +6,54 @@ const state = {
   recommendationTimeout: 35000,
   selected: [], recommendations: [], excluded: [], category: null, context: "any",
   mode: "adaptive", page: 0, clicks: 0, started: null, revision: 0, request: 0,
-  messageId: crypto.randomUUID(), saved: false, generating: false, confirming: false,
+  messageId: crypto.randomUUID(), saved: false, generating: false, confirming: false, measurement: null,
 };
+const cardExposure = {
+  total: 0,
+  symbols: {key: null, seen: new Set()},
+  "all-symbols": {key: null, seen: new Set()},
+};
+const cardObserver = new IntersectionObserver(recordExposedCards, {threshold: 0.5});
+
+function activeCardGrid() {
+  if (document.hidden) return null;
+  const dialog = document.querySelector("dialog[open]");
+  if (!dialog) return $("symbols");
+  return dialog.id === "all-dialog" ? $("all-symbols") : null;
+}
+
+function countCard(button, grid) {
+  if (!grid || button.parentElement !== grid || button.disabled) return;
+  const seen = cardExposure[grid.id].seen;
+  if (seen.has(button.dataset.symbol)) return;
+  seen.add(button.dataset.symbol);
+  cardExposure.total += 1;
+}
+
+function recordExposedCards(entries) {
+  const grid = activeCardGrid();
+  if (!grid || grid.getAttribute("aria-busy") === "true") return;
+  for (const entry of entries) {
+    if (entry.intersectionRatio >= 0.5) countCard(entry.target, grid);
+  }
+}
+
+function watchCards() {
+  cardObserver.disconnect();
+  cardObserver.takeRecords();
+  const grid = activeCardGrid();
+  if (!grid || grid.getAttribute("aria-busy") === "true") return;
+  for (const button of grid.querySelectorAll("button[data-symbol]:enabled")) cardObserver.observe(button);
+}
+
+function presentCards(gridId, key) {
+  const view = cardExposure[gridId];
+  if (view.key !== key) {
+    view.key = key;
+    view.seen.clear();
+  }
+  watchCards();
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -41,14 +87,20 @@ async function api(path, body) {
 }
 
 function touch() {
+  recordExposedCards(cardObserver.takeRecords());
   if (state.started === null) state.started = performance.now();
   state.clicks += 1;
 }
 
-function invalidateSentence() {
+function newMessageId() {
   state.revision += 1;
   state.saved = false;
   state.messageId = crypto.randomUUID();
+  state.measurement = null;
+}
+
+function invalidateSentence() {
+  newMessageId();
   $("sentence-panel").hidden = true;
   $("sentence").value = "";
 }
@@ -56,6 +108,11 @@ function invalidateSentence() {
 function reset() {
   state.selected = []; state.excluded = []; state.page = 0; state.category = null;
   state.clicks = 0; state.started = null;
+  cardExposure.total = 0;
+  for (const gridId of ["symbols", "all-symbols"]) {
+    cardExposure[gridId].key = null;
+    cardExposure[gridId].seen.clear();
+  }
   invalidateSentence(); renderCategories(); renderSelected(); updateBoard(); showError();
   if ("speechSynthesis" in window) speechSynthesis.cancel();
 }
@@ -83,7 +140,11 @@ function symbolButton(symbol, all = false) {
   const icon = node("span", "symbol-icon", symbol.icon); icon.setAttribute("aria-hidden", "true");
   button.append(icon, node("span", "", symbol.label));
   if (all) { button.setAttribute("aria-pressed", String(state.selected.includes(symbol.id))); button.disabled = state.selected.includes(symbol.id); }
-  button.addEventListener("click", () => choose(symbol.id));
+  button.addEventListener("click", () => {
+    // An activated card counts even if the viewport observer has not delivered its callback.
+    countCard(button, activeCardGrid());
+    choose(symbol.id);
+  });
   return button;
 }
 
@@ -133,6 +194,8 @@ function renderGrid(symbols) {
     const same = [...$("symbols").children].find((button) => button.dataset.symbol === focusedId);
     (same || $("symbols").querySelector("button") || $("all-open")).focus({preventScroll: true});
   }
+  presentCards("symbols", JSON.stringify([state.mode, state.category, state.context, state.page,
+    state.selected, symbols.map((symbol) => symbol.id)]));
 }
 
 async function updateBoard() {
@@ -149,6 +212,7 @@ async function updateBoard() {
     return;
   }
   $("symbols").setAttribute("aria-busy", "true");
+  watchCards();
   $("refresh").disabled = true;
   $("source").textContent = "추천 준비 중…";
   try {
@@ -163,6 +227,7 @@ async function updateBoard() {
   } catch (error) {
     if (request !== state.request) return;
     $("symbols").setAttribute("aria-busy", "false");
+    watchCards();
     $("source").textContent = "연결 확인 필요";
     $("recommend-notice").textContent = `${error.message} 전체 그림은 계속 사용할 수 있어요.`;
     $("refresh").disabled = false; $("refresh").textContent = "↻ 추천 다시 시도";
@@ -171,6 +236,7 @@ async function updateBoard() {
 
 function renderAll() {
   if (!$("all-dialog").open) return;
+  recordExposedCards(cardObserver.takeRecords());
   const query = $("search").value.trim().toLocaleLowerCase();
   const symbols = state.vocabulary.filter((s) => s.label.includes(query) || s.id.includes(query));
   const focusId = document.activeElement?.dataset.symbol;
@@ -182,6 +248,7 @@ function renderAll() {
     const next = buttons.find((b) => !b.disabled && b.dataset.symbol === focusId) || buttons.find((b) => !b.disabled);
     (next || $("search")).focus({preventScroll: true});
   }
+  presentCards("all-symbols", JSON.stringify(symbols.map((symbol) => symbol.id)));
 }
 
 async function generate() {
@@ -210,6 +277,13 @@ async function confirmSentence() {
   const sentence = $("sentence").value.trim();
   if (!sentence) { $("sentence").focus(); showError("전달할 문장을 입력해 주세요."); return; }
   if (state.confirming) return;
+  recordExposedCards(cardObserver.takeRecords());
+  const now = performance.now();
+  const measurement = state.measurement ??= {
+    selection_count: state.clicks,
+    elapsed_ms: Math.min(86400000, Math.round(now - (state.started ?? now))),
+    cards_seen: Math.min(1000000, cardExposure.total),
+  };
   displayOutput(sentence, state.selected);
   if (state.saved) { $("save-status").textContent = "내 이야기에 저장했어요."; return; }
   state.confirming = true; $("confirm").disabled = true;
@@ -217,8 +291,7 @@ async function confirmSentence() {
   const revision = state.revision;
   try {
     await api("/api/confirm", {id: state.messageId, selected: [...state.selected], sentence,
-      mode: state.mode, context: state.context, selection_count: state.clicks,
-      elapsed_ms: Math.min(86400000, Math.round(performance.now() - (state.started ?? performance.now())))});
+      mode: state.mode, context: state.context, ...measurement});
     if (revision === state.revision) state.saved = true;
     $("save-status").textContent = "내 이야기에 저장했어요.";
   } catch (error) { $("save-status").textContent = `저장하지 못했어요. ${error.message} 이 창을 닫고 전달하기를 다시 눌러 주세요.`; }
@@ -244,17 +317,23 @@ async function openHistory() {
     const result = await api("/api/history");
     $("history-list").replaceChildren(...result.messages.map((message) => {
       const button = node("button", "history-item");
-      button.append(node("p", "", message.sentence), node("small", "", `${new Date(message.created_at).toLocaleString("ko-KR")} · 다시 보여주기`));
+      const time = `작성 ${(message.elapsed_ms / 1000).toLocaleString("ko-KR", {maximumFractionDigits: 2})}초`;
+      const cards = message.cards_seen == null ? "" : ` · 본 그림 ${message.cards_seen}개`;
+      button.append(node("p", "", message.sentence),
+        node("small", "", `${new Date(message.created_at).toLocaleString("ko-KR")} · 다시 보여주기`),
+        node("small", "", `${time}${cards}`));
       button.addEventListener("click", () => { $("history-dialog").close(); displayOutput(message.sentence, message.symbols); $("save-status").textContent = "이전에 전한 이야기예요."; });
       return button;
     }));
     if (!result.messages.length) $("history-list").append(node("p", "subtle", "아직 저장한 이야기가 없어요. 그림을 골라 첫 이야기를 만들어 보세요."));
     const table = node("table"), head = node("tr");
-    for (const title of ["방식", "메시지", "평균 선택", "평균 시간"]) head.append(node("th", "", title));
+    for (const title of ["방식", "메시지", "평균 선택", "평균 본 그림", "평균 시간"]) head.append(node("th", "", title));
     table.append(head);
     for (const row of result.stats) {
       const tr = node("tr");
-      for (const value of [row.mode === "adaptive" ? "맞춤 추천" : "기본 그림판", row.messages, row.average_selections, `${row.average_seconds}초`]) tr.append(node("td", "", value));
+      const cards = row.measured_messages ? `${row.average_cards_seen}개 (${row.measured_messages}건)` : "—";
+      for (const value of [row.mode === "adaptive" ? "맞춤 추천" : "기본 그림판", row.messages,
+        row.average_selections, cards, `${row.average_seconds}초`]) tr.append(node("td", "", value));
       table.append(tr);
     }
     $("stats").replaceChildren(table);
@@ -266,7 +345,7 @@ function bind() {
   $("clear").addEventListener("click", reset);
   $("generate").addEventListener("click", generate);
   $("confirm").addEventListener("click", confirmSentence);
-  $("sentence").addEventListener("input", () => { state.saved = false; state.messageId = crypto.randomUUID(); state.revision += 1; });
+  $("sentence").addEventListener("input", newMessageId);
   $("context").addEventListener("change", () => { touch(); state.context = $("context").value; state.excluded = []; updateBoard(); });
   $("refresh").addEventListener("click", () => {
     touch();
@@ -284,9 +363,15 @@ function bind() {
     for (const m of ["adaptive", "static"]) $(`mode-${m}`).setAttribute("aria-pressed", String(m === mode));
     reset();
   });
-  $("all-open").addEventListener("click", () => { touch(); $("all-dialog").showModal(); $("search").value = ""; renderAll(); $("search").focus(); });
+  $("all-open").addEventListener("click", () => {
+    touch(); cardExposure["all-symbols"].key = null;
+    $("all-dialog").showModal(); $("search").value = ""; renderAll();
+    $("all-symbols").scrollTop = 0; $("search").focus();
+  });
   $("search").addEventListener("input", renderAll);
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => $(button.dataset.close).close()));
+  document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("close", watchCards));
+  document.addEventListener("visibilitychange", watchCards);
   $("speak").addEventListener("click", speak);
   $("stop-speech").addEventListener("click", () => { if ("speechSynthesis" in window) speechSynthesis.cancel(); $("speech-status").textContent = "읽기를 멈췄어요."; });
   $("output-dialog").addEventListener("close", () => { if ("speechSynthesis" in window) speechSynthesis.cancel(); });

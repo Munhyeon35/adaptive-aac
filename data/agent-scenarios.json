@@ -1,0 +1,64 @@
+{
+  "kind": "synthetic-aac-browser-scenarios",
+  "sources": {
+    "visual_search": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9132148/",
+    "motor_recovery": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6101246/",
+    "developmental_delay": "https://pubmed.ncbi.nlm.nih.gov/20360461/",
+    "communication_functions": "https://pubmed.ncbi.nlm.nih.gov/24839882/"
+  },
+  "personas": [
+    {"id": "visual_search", "inspect_ms_per_card": 380, "action_ms": 420, "mis_tap_probability": 0, "budget_ms": 65000},
+    {"id": "motor_recovery", "inspect_ms_per_card": 220, "action_ms": 750, "mis_tap_probability": 0.25, "budget_ms": 65000}
+  ],
+  "tasks": [
+    {
+      "id": "food_request",
+      "context": "meal",
+      "intent": "빵을 먹고 싶어요.",
+      "goal_cards": ["먹고 싶어요", "빵"],
+      "score_phrases": {"5": ["빵을 먹고 싶어요", "빵 먹고 싶어요"], "4": ["빵을 주세요", "빵 주세요"], "3": ["먹고 싶어요", "빵"]}
+    },
+    {
+      "id": "more_water",
+      "context": "home",
+      "intent": "물을 더 마시고 싶어요.",
+      "goal_cards": ["마시고 싶어요", "물", "더"],
+      "score_phrases": {"5": ["물을 더 마시고 싶어요", "물을 더 주세요"], "4": ["물을 마시고 싶어요", "물 주세요"], "3": ["마시고 싶어요", "물"]}
+    },
+    {
+      "id": "pain_location",
+      "context": "any",
+      "intent": "머리가 아파요.",
+      "goal_cards": ["아파요", "머리"],
+      "score_phrases": {"5": ["머리가 아파요", "머리 아파요"], "3": ["아파요", "머리"]}
+    },
+    {
+      "id": "refusal",
+      "context": "meal",
+      "intent": "빵을 먹고 싶지 않아요.",
+      "goal_cards": ["먹고 싶어요", "빵", "싫어요 / 안 할래요"],
+      "score_phrases": {"5": ["빵을 먹고 싶지 않아요", "빵을 안 먹을래요", "빵은 싫어요"], "3": ["먹고 싶지 않아요", "싫어요 / 안 할래요"]}
+    },
+    {
+      "id": "thanks",
+      "context": "school",
+      "intent": "고마워요.",
+      "goal_cards": ["고마워요"],
+      "score_phrases": {"5": ["고마워요", "감사해요", "감사합니다"]}
+    },
+    {
+      "id": "fan_request",
+      "context": "home",
+      "intent": "선풍기를 주세요.",
+      "goal_cards": ["주세요", "선풍기"],
+      "score_phrases": {"5": ["선풍기를 주세요", "선풍기 주세요"], "4": ["선풍기"], "3": ["주세요"]}
+    },
+    {
+      "id": "temperature_detail",
+      "context": "home",
+      "intent": "미지근한 물을 마시고 싶어요.",
+      "goal_cards": ["마시고 싶어요", "물", "미지근한"],
+      "score_phrases": {"5": ["미지근한 물을 마시고 싶어요", "미지근한 물을 주세요"], "3": ["물을 마시고 싶어요", "마시고 싶어요", "물"]}
+    }
+  ]
+}

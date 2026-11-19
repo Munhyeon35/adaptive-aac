@@ -134,7 +134,13 @@ CHROMIUM_PATH=/absolute/path/to/chromium node scripts/browser-test.mjs
 
 브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 검색, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다. 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
 
-`data/scenarios.json`은 손으로 만든 **개발용 합성 데이터 16건**입니다. 평가 수치는 6개 그림 단위 탐색의 시뮬레이션이며 실제 사용자의 성능 향상을 의미하지 않습니다. 사용자 평가 설계와 계산 가정은 [평가·학습 안내](docs/evaluation.md)를 확인하세요.
+합성 사용자 에이전트는 두 사용자 유형과 일곱 의도를 실제 브라우저에서 맞춤 추천·기본 그림판 각각으로 수행합니다. 살펴본 카드 수, 전달까지의 시간, 의도 전달 점수(5점 만점)를 JSON에 기록합니다.
+
+```bash
+CHROMIUM_PATH=/absolute/path/to/chromium make evaluate-agent
+```
+
+앱에서는 `지난 이야기`와 JSON 내보내기에서 확정한 메시지의 카드 노출 수와 작성 시간을 확인할 수 있습니다. 합성 사용자 설정, 채점 기준, 로컬 Qwen 평가 실행법은 [평가·학습 안내](docs/evaluation.md)를 확인하세요.
 
 ## 학습 데이터와 파인튜닝
 
