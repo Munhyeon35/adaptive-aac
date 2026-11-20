@@ -3,6 +3,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import re
 import os
 from pathlib import Path
 import uuid
@@ -72,7 +73,8 @@ class Application:
                 if category is not None and (not isinstance(category, str) or category not in CATEGORY_IDS):
                     raise ValueError("분류를 확인해 주세요.")
                 excluded = validate_ids(body.get("excluded", []), maximum=len(VOCABULARY))
-                return recommend(selected, self.store.history(profile_id), category, context, excluded, provider=provider)
+                limit = 6 if selected else 16
+                return recommend(selected, self.store.history(profile_id), category, context, excluded, limit=limit, provider=provider)
             if path == "/api/sentence":
                 return generate_sentence(selected, provider)
             sentence = body.get("sentence")
@@ -138,6 +140,16 @@ def make_handler(app):
                 if path.startswith("/api/"):
                     result = app.handle(self.command, path, body, self.headers.get("X-Profile-ID", ""))
                     self.respond(200, result)
+                    return
+                if self.command == "GET" and path.startswith("/symbols/"):
+                    symbol_name = path[len("/symbols/"):]
+                    # Strict whitelist: no traversal, percent-encoded path, or arbitrary files.
+                    if not re.fullmatch(r"[A-Za-z0-9_,!() .+\-]+\.svg", symbol_name):
+                        raise FileNotFoundError()
+                    svg_path = ROOT / "web" / "assets" / "symbols" / symbol_name
+                    if not svg_path.is_file():
+                        raise FileNotFoundError()
+                    self.respond(200, svg_path.read_bytes(), "image/svg+xml")
                     return
                 assets = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
                           "/style.css": ("style.css", "text/css"), "/favicon.svg": ("favicon.svg", "image/svg+xml")}
