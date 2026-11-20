@@ -3,6 +3,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import re
 import os
 from pathlib import Path
 import uuid
@@ -72,7 +73,8 @@ class Application:
                 if category is not None and (not isinstance(category, str) or category not in CATEGORY_IDS):
                     raise ValueError("분류를 확인해 주세요.")
                 excluded = validate_ids(body.get("excluded", []), maximum=len(VOCABULARY))
-                return recommend(selected, self.store.history(profile_id), category, context, excluded, provider=provider)
+                limit = 6 if selected else 16
+                return recommend(selected, self.store.history(profile_id), category, context, excluded, limit=limit, provider=provider)
             if path == "/api/sentence":
                 return generate_sentence(selected, provider)
             sentence = body.get("sentence")
@@ -95,7 +97,7 @@ class Application:
         raise FileNotFoundError("요청한 기능을 찾을 수 없어요.")
 
 
-def make_handler(app):
+def make_handler(app, allowed_hosts=(), allowed_origins=()):
     class Handler(BaseHTTPRequestHandler):
         server_version = "AdaptiveAAC/0.1"
 
@@ -117,12 +119,12 @@ def make_handler(app):
         def dispatch(self):
             try:
                 host = self.headers.get("Host", "")
-                allowed = {f"localhost:{self.server.server_port}", f"127.0.0.1:{self.server.server_port}"}
+                allowed = {f"localhost:{self.server.server_port}", f"127.0.0.1:{self.server.server_port}", *allowed_hosts}
                 if host not in allowed:
                     self.respond(403, {"error": "로컬 주소로 접속해 주세요."})
                     return
                 origin = self.headers.get("Origin")
-                if origin and origin != f"http://{host}":
+                if origin and origin != f"http://{host}" and origin not in allowed_origins:
                     self.respond(403, {"error": "다른 사이트의 요청은 허용하지 않아요."})
                     return
                 path = urlsplit(self.path).path
@@ -141,6 +143,16 @@ def make_handler(app):
                 if path.startswith("/api/"):
                     result = app.handle(self.command, path, body, self.headers.get("X-Profile-ID", ""))
                     self.respond(200, result)
+                    return
+                if self.command == "GET" and path.startswith("/symbols/"):
+                    symbol_name = path[len("/symbols/"):]
+                    # Strict whitelist: no traversal, percent-encoded path, or arbitrary files.
+                    if not re.fullmatch(r"[A-Za-z0-9_,!() .+\-]+\.svg", symbol_name):
+                        raise FileNotFoundError()
+                    svg_path = ROOT / "web" / "assets" / "symbols" / symbol_name
+                    if not svg_path.is_file():
+                        raise FileNotFoundError()
+                    self.respond(200, svg_path.read_bytes(), "image/svg+xml")
                     return
                 assets = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
                           "/style.css": ("style.css", "text/css"), "/favicon.svg": ("favicon.svg", "image/svg+xml")}
@@ -166,6 +178,10 @@ def make_handler(app):
     return Handler
 
 
+def env_list(name):
+    return frozenset(item.strip() for item in os.environ.get(name, "").split(",") if item.strip())
+
+
 def main():
     load_env()
     key = os.environ.get("OPENAI_API_KEY", "")
@@ -179,8 +195,12 @@ def main():
     if not path.is_absolute():
         path = ROOT / path
     port = int(os.environ.get("AAC_PORT", "8765"))
+    # Deployment behind a reverse proxy only: localhost stays the default.
+    bind = os.environ.get("AAC_HOST", "127.0.0.1")
+    hosts = env_list("AAC_ALLOWED_HOSTS")
+    origins = env_list("AAC_ALLOWED_ORIGINS")
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(Application(Store(path), provider, local_provider)))
+        server = ThreadingHTTPServer((bind, port), make_handler(Application(Store(path), provider, local_provider), hosts, origins))
     except OSError as error:
         raise SystemExit(f"Cannot open localhost:{port}: {error}. Check local server permissions or set AAC_PORT to another port.") from None
     print(f"Adaptive AAC: http://localhost:{server.server_port}", flush=True)

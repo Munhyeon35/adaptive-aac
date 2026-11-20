@@ -46,7 +46,7 @@ def recommend(selected, history=(), category=None, context="any", excluded=(), l
     source, reason = "local", None
     if provider and candidates:
         try:
-            proposed = provider.recommend(selected, history, candidates, context, limit)
+            proposed = provider.recommend(selected, history, candidates[:80], context, limit)
             if (not isinstance(proposed, list) or not proposed or len(proposed) > limit
                     or any(not isinstance(i, str) or i not in candidates for i in proposed)
                     or len(proposed) != len(set(proposed))):

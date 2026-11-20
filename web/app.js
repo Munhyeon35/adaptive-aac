@@ -5,7 +5,7 @@ const state = {
   vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false, localModelAvailable: false,
   recommendationTimeout: 35000,
   selected: [], recommendations: [], excluded: [], category: null, context: "any",
-  mode: "adaptive", page: 0, clicks: 0, started: null, revision: 0, request: 0,
+  mode: "adaptive", page: 0, allPage: 0, clicks: 0, started: null, revision: 0, request: 0,
   messageId: crypto.randomUUID(), saved: false, generating: false, confirming: false, measurement: null,
 };
 const cardExposure = {
@@ -132,12 +132,30 @@ function remove(id) {
   announce("그림을 취소했어요.");
 }
 
+function symbolVisual(symbol, className = "symbol-icon") {
+  const wrap = node("span", className);
+  wrap.setAttribute("aria-hidden", "true");
+  if (symbol.image) {
+    const img = document.createElement("img");
+    img.className = "aac-symbol-image";
+    img.src = symbol.image;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.addEventListener("error", () => { wrap.replaceChildren(document.createTextNode(symbol.icon || "□")); }, {once: true});
+    wrap.append(img);
+  } else {
+    wrap.textContent = symbol.icon || "□";
+  }
+  return wrap;
+}
+
 function symbolButton(symbol, all = false) {
   const button = node("button", "symbol-card");
   button.dataset.category = symbol.category;
   button.dataset.symbol = symbol.id;
   button.setAttribute("aria-label", `${symbol.label}${state.selected.includes(symbol.id) ? " (선택됨)" : " 선택"}`);
-  const icon = node("span", "symbol-icon", symbol.icon); icon.setAttribute("aria-hidden", "true");
+  const icon = symbolVisual(symbol);
   button.append(icon, node("span", "", symbol.label));
   if (all) { button.setAttribute("aria-pressed", String(state.selected.includes(symbol.id))); button.disabled = state.selected.includes(symbol.id); }
   button.addEventListener("click", () => {
@@ -167,7 +185,7 @@ function renderSelected() {
     $("selected").replaceChildren(...state.selected.map((id) => {
       const symbol = state.byId.get(id), button = node("button", "token");
       button.setAttribute("aria-label", `${symbol.label} 선택 취소`);
-      button.append(node("span", "", symbol.icon), node("span", "", symbol.label), node("span", "remove", "✕"));
+      button.append(symbolVisual(symbol, "token-symbol"), node("span", "", symbol.label), node("span", "remove", "✕"));
       button.addEventListener("click", () => remove(id));
       return button;
     }));
@@ -187,6 +205,7 @@ function renderSelected() {
 
 function renderGrid(symbols) {
   const focusedId = $("symbols").contains(document.activeElement) ? document.activeElement.dataset.symbol : null;
+  $("symbols").classList.toggle("initial-board", state.selected.length === 0);
   $("symbols").replaceChildren(...symbols.map((symbol) => symbolButton(symbol, state.mode === "static")));
   if (!symbols.length) $("symbols").append(node("p", "empty-grid", "이 분류의 그림을 모두 봤어요.\n다른 분류나 전체 그림을 선택해 보세요."));
   $("symbols").setAttribute("aria-busy", "false");
@@ -204,9 +223,10 @@ async function updateBoard() {
   $("recommend-notice").textContent = "";
   if (state.mode === "static") {
     const available = state.vocabulary.filter((s) => !state.category || s.category === state.category);
-    const pages = Math.max(1, Math.ceil(available.length / 6));
+    const pageSize = state.selected.length ? 6 : 16;
+    const pages = Math.max(1, Math.ceil(available.length / pageSize));
     state.page %= pages;
-    renderGrid(available.slice(state.page * 6, (state.page + 1) * 6));
+    renderGrid(available.slice(state.page * pageSize, (state.page + 1) * pageSize));
     $("source").textContent = `기본 그림판 · ${state.page + 1}/${pages}`;
     $("refresh").textContent = "다음 그림 →"; $("refresh").disabled = pages <= 1;
     return;
@@ -216,7 +236,7 @@ async function updateBoard() {
   $("refresh").disabled = true;
   $("source").textContent = "추천 준비 중…";
   try {
-    const result = await api("/api/recommend", {selected: [...state.selected], excluded: [...state.excluded], category: state.category, context: state.context});
+    const result = await api("/api/recommend", {selected: [...state.selected], excluded: [...state.excluded], category: state.category, context: state.context, limit: state.selected.length ? 6 : 16});
     if (request !== state.request) return;
     state.recommendations = result.symbols.map((s) => s.id);
     renderGrid(result.symbols);
@@ -234,21 +254,27 @@ async function updateBoard() {
   }
 }
 
+const ALL_PAGE_SIZE = 48;
 function renderAll() {
-  if (!$("all-dialog").open) return;
+  if (!$('all-dialog').open) return;
+  const total = state.vocabulary.length;
+  const pages = Math.max(1, Math.ceil(total / ALL_PAGE_SIZE));
+  state.allPage = Math.min(Math.max(0, state.allPage), pages - 1);
+  const from = state.allPage * ALL_PAGE_SIZE;
+  const visible = state.vocabulary.slice(from, from + ALL_PAGE_SIZE);
+  $('all-symbols').replaceChildren(...visible.map((s) => symbolButton(s, true)));
+  $('all-count').textContent = `${total}개 중 ${from + 1}~${from + visible.length}개 그림`;
+  $('all-page-label').textContent = `${state.allPage + 1} / ${pages} 페이지`;
+  $('all-prev').disabled = state.allPage === 0;
+  $('all-next').disabled = state.allPage >= pages - 1;
+  presentCards("all-symbols", state.allPage);
+}
+function changeAllPage(delta) {
   recordExposedCards(cardObserver.takeRecords());
-  const query = $("search").value.trim().toLocaleLowerCase();
-  const symbols = state.vocabulary.filter((s) => s.label.includes(query) || s.id.includes(query));
-  const focusId = document.activeElement?.dataset.symbol;
-  $("all-symbols").replaceChildren(...symbols.map((s) => symbolButton(s, true)));
-  if (!symbols.length) $("all-symbols").append(node("p", "empty-grid", "맞는 그림이 없어요. 다른 이름으로 찾아보세요."));
-  $("all-count").textContent = `${symbols.length}개의 그림 · 선택한 뒤 닫기를 눌러 이야기를 이어가세요.`;
-  if (focusId) {
-    const buttons = [...$("all-symbols").children];
-    const next = buttons.find((b) => !b.disabled && b.dataset.symbol === focusId) || buttons.find((b) => !b.disabled);
-    (next || $("search")).focus({preventScroll: true});
-  }
-  presentCards("all-symbols", JSON.stringify(symbols.map((symbol) => symbol.id)));
+  state.allPage += delta;
+  renderAll();
+  $('all-symbols').scrollTop = 0;
+  $('all-page-label').focus({preventScroll: true});
 }
 
 async function generate() {
@@ -321,7 +347,7 @@ async function openHistory() {
       const cards = message.cards_seen == null ? "" : ` · 본 그림 ${message.cards_seen}개`;
       button.append(node("p", "", message.sentence),
         node("small", "", `${new Date(message.created_at).toLocaleString("ko-KR")} · 다시 보여주기`),
-        node("small", "", `${time}${cards}`));
+        node("br"), node("small", "", `${time}${cards}`));
       button.addEventListener("click", () => { $("history-dialog").close(); displayOutput(message.sentence, message.symbols); $("save-status").textContent = "이전에 전한 이야기예요."; });
       return button;
     }));
@@ -364,11 +390,11 @@ function bind() {
     reset();
   });
   $("all-open").addEventListener("click", () => {
-    touch(); cardExposure["all-symbols"].key = null;
-    $("all-dialog").showModal(); $("search").value = ""; renderAll();
-    $("all-symbols").scrollTop = 0; $("search").focus();
+    touch(); state.allPage = 0; cardExposure["all-symbols"].key = null;
+    $("all-dialog").showModal(); renderAll(); $("all-symbols").scrollTop = 0; $("all-next").focus();
   });
-  $("search").addEventListener("input", renderAll);
+  $("all-prev").addEventListener("click", () => changeAllPage(-1));
+  $("all-next").addEventListener("click", () => changeAllPage(1));
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => $(button.dataset.close).close()));
   document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("close", watchCards));
   document.addEventListener("visibilitychange", watchCards);
