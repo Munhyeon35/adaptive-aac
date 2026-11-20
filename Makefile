@@ -1,4 +1,4 @@
-.PHONY: run test evaluate evaluate-agent training local-model check
+.PHONY: run test evaluate evaluate-agent benchmark-model training local-model check
 
 run:
 	python3 run.py
@@ -14,6 +14,9 @@ evaluate:
 
 evaluate-agent:
 	node scripts/evaluate-agent.mjs --output artifacts/agent-evaluation.json
+
+benchmark-model:
+	python3 -m scripts.benchmark_model --engines deterministic
 
 training:
 	python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synthetic-training.jsonl

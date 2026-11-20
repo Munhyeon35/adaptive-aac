@@ -159,6 +159,16 @@ class APITests(unittest.TestCase):
         following = self.service.recommend(self.profile["id"], [first["symbols"][0]["id"]])
         self.assertLessEqual(len(following["symbols"]), 6)
 
+    def test_local_model_is_preloaded_at_startup_and_closed_at_shutdown(self):
+        class Worker:
+            calls = []
+            preload = lambda self: self.calls.append("preload")
+            close = lambda self: self.calls.append("close")
+        worker = Worker()
+        with TestClient(create_app(AacService(self.store, local_provider=worker), 8765), base_url="http://localhost:8765"):
+            self.assertEqual(worker.calls, ["preload"])
+        self.assertEqual(worker.calls, ["preload", "close"])
+
     def test_api_docs_are_served_with_their_own_policy(self):
         status, headers, _ = self.http(path="/docs")
         self.assertEqual(status, 200)

@@ -32,7 +32,7 @@ await withBrowser(async ({send, evaluate, until, errors, navigate}) => {
   });
   assert.equal(await evaluate('document.getElementById("aac-eval-result").matches(":popover-open")'), true);
   assert.match(await evaluate('document.querySelector("#aac-eval-result [role=status]").textContent'), /완료 시간 1.23초 · 카드 노출/);
-  assert.ok(await evaluate('document.querySelector("#aac-eval-result img[src=\"/symbols/bread.svg\"]") !== null'));
+  assert.ok(await evaluate(`Boolean(document.querySelector('#aac-eval-result img[src="/symbols/bread.svg"]'))`));
   await screenshot("eval-result");
   await click("#aac-eval-result button");
   assert.equal(await evaluate('document.getElementById("aac-eval-result")'), null);

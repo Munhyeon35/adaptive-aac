@@ -13,12 +13,14 @@ import time
 
 from aac.config import ROOT
 from aac.local_model import MODEL_REPO, parse_ids
+from aac.runtime import CHAT_TEMPLATE_KWARGS
 
 
 def measure(model, tokenizer, rows, generate, sampler):
     hits, valid, results = 0, 0, []
     for row in rows:
-        prompt = tokenizer.apply_chat_template(row["messages"][:-1], tokenize=False, add_generation_prompt=True)
+        prompt = tokenizer.apply_chat_template(row["messages"][:-1], tokenize=False, add_generation_prompt=True,
+                                               **CHAT_TEMPLATE_KWARGS)
         payload = json.loads(row["messages"][1]["content"])
         targets = json.loads(row["messages"][-1]["content"])["ids"]
         started = time.monotonic()
@@ -72,7 +74,7 @@ def main():
         for split in ("train", "valid", "test"):
             for line in (run_dir / f"data/{split}.jsonl").read_text().splitlines():
                 row = json.loads(line)
-                length = len(tokenizer.apply_chat_template(row["messages"], tokenize=True))
+                length = len(tokenizer.apply_chat_template(row["messages"], tokenize=True, **CHAT_TEMPLATE_KWARGS))
                 max_tokens = max(max_tokens, length)
         if max_tokens > 2048:
             raise ValueError(f"A training example has {max_tokens} tokens; refusing silent truncation (limit 2048)")

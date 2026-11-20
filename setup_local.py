@@ -26,6 +26,11 @@ def main():
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto", help="Transformers device")
     parser.add_argument("--training", choices=("auto", "lora", "qlora"), default="auto")
     parser.add_argument("--no-activate", action="store_true", help="Evaluate and save weights without replacing the active model")
+    parser.add_argument("--model-repo", help="Transformers base model (see aac.torch_model.SUPPORTED_MODELS)")
+    parser.add_argument("--lora-rank", type=int, help="Transformers LoRA rank (default 8)")
+    parser.add_argument("--lora-layers", type=int, help="Adapt the last N layers, 0 = all (default 4)")
+    parser.add_argument("--lora-targets", choices=("attention", "all"), help="q/v only, or all linear projections")
+    parser.add_argument("--learning-rate", type=float, help="Transformers LoRA learning rate (default 1e-4)")
     args = parser.parse_args()
     if not 1 <= args.iters <= 10000:
         parser.error("--iters must be between 1 and 10000")
@@ -56,6 +61,9 @@ def main():
             return 0
         status(stage="check_platform")
         backend = select_backend(args.backend)
+        tuning = (args.model_repo, args.lora_rank, args.lora_layers, args.lora_targets, args.learning_rate)
+        if backend != "transformers" and any(value is not None for value in tuning):
+            raise ValueError("--model-repo and LoRA options apply to the Transformers backend; MLX uses its pinned recipe.")
         if backend == "mlx" and (args.device != "auto" or args.training == "lora"):
             raise ValueError("The MLX backend uses Apple GPU QLoRA. Use --backend transformers for CPU/CUDA LoRA.")
         if backend == "transformers" and platform.system() == "Darwin" and platform.machine() == "x86_64" and sys.version_info >= (3, 13):
@@ -90,6 +98,9 @@ def main():
         command = [str(python), "-m", module, "--run-dir", str(run_dir), "--iters", str(args.iters)]
         if backend == "transformers":
             command += ["--device", args.device, "--training", args.training]
+            for flag in ("model_repo", "lora_rank", "lora_layers", "lora_targets", "learning_rate"):
+                if getattr(args, flag) is not None:
+                    command += ["--" + flag.replace("_", "-"), str(getattr(args, flag))]
         if args.no_activate:
             command.append("--no-activate")
         subprocess.run(command, cwd=ROOT, env=env, check=True)
