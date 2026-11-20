@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
 import uuid
 
@@ -38,7 +39,11 @@ class UsageWeightTests(unittest.TestCase):
         self.profile = self.store.create_profile("나")["id"]
 
     def sql(self, statement, *args):
-        with closing(sqlite3.connect(self.store.path)) as db, db:
+        return self.sql_at(self.store.path, statement, *args)
+
+    @staticmethod
+    def sql_at(path, statement, *args):
+        with closing(sqlite3.connect(path)) as db, db:
             return db.execute(statement, args).fetchall()
 
     def assertUsage(self, actual, expected):
@@ -121,10 +126,21 @@ class UsageWeightTests(unittest.TestCase):
                 INSERT INTO profiles(id, name) VALUES ('old', '나');""")
             db.execute("INSERT INTO messages VALUES ('m1', 'old', ?, '문장', 'adaptive', 'any', 2, 1, ?)",
                        (json.dumps(["eat", "bread"]), datetime.now(timezone.utc).isoformat()))
+        # Several workers opening the old database at once must still backfill exactly once.
+        threads = [threading.Thread(target=Store, args=(path,)) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
         store = Store(path)
         self.assertAlmostEqual(store.usage("old")["transitions"]["eat"]["bread"], 1, places=4)
-        Store(path)  # A second start must not count the same messages again.
-        self.assertAlmostEqual(store.usage("old")["transitions"]["eat"]["bread"], 1, places=4)
+        self.assertIn("cards_seen", {row[1] for row in self.sql_at(path, "PRAGMA table_info(messages)")})
+
+    def test_confirm_with_cards_seen_is_counted(self):
+        self.store.confirm(self.profile, str(uuid.uuid4()), ["eat", "bread"], "문장", "adaptive", "any", 2, 1000,
+                           cards_seen=12)
+        self.assertAlmostEqual(self.store.usage(self.profile)["transitions"]["eat"]["bread"], 1, places=4)
+        self.assertEqual(self.sql("SELECT cards_seen FROM messages"), [(12,)])
 
 
 if __name__ == "__main__":

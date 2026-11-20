@@ -65,6 +65,7 @@ class ConfirmRequest(BaseModel):
     context: StrictStr = "any"
     selection_count: StrictInt
     elapsed_ms: StrictInt
+    cards_seen: Optional[StrictInt] = None
 
 
 def error(status, message):
@@ -216,7 +217,7 @@ def create_app(service, port=8765, allowed_hosts=(), allowed_origins=(), auth=No
     @app.post("/api/confirm", tags=["communication"])
     def confirm(body: ConfirmRequest, pid: str = Depends(profile_id)):
         return service.confirm(pid, body.id, body.selected, body.sentence, body.mode, body.context,
-                               body.selection_count, body.elapsed_ms)
+                               body.selection_count, body.elapsed_ms, cards_seen=body.cards_seen)
 
     @app.get("/symbols/{name}", include_in_schema=False)
     def symbol(name: str):

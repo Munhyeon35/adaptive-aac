@@ -86,7 +86,8 @@ class AacService:
         context_value(context)
         return generate_sentence(selected, provider)
 
-    def confirm(self, profile_id, message_id, selected, sentence, mode, context, selection_count, elapsed_ms):
+    def confirm(self, profile_id, message_id, selected, sentence, mode, context, selection_count, elapsed_ms,
+                cards_seen=None):
         self.store.profile(profile_id)
         selected = validate_ids(list(selected), allow_empty=False)
         context = context_value(context)
@@ -98,9 +99,11 @@ class AacService:
             message_id = str(uuid.UUID(str(message_id)))
         except (ValueError, TypeError, AttributeError):
             raise ValueError("메시지 식별자를 확인해 주세요.") from None
+        if cards_seen is not None:
+            cards_seen = bounded_int(cards_seen, 0, 1000000)
         return self.store.confirm(profile_id, message_id, selected, sentence.strip(), mode, context,
                                   bounded_int(selection_count, len(selected), 10000),
-                                  bounded_int(elapsed_ms, 0, 86400000))
+                                  bounded_int(elapsed_ms, 0, 86400000), cards_seen=cards_seen)
 
     def _provider(self, profile_id):
         # Cloud is used only after the profile opts in; otherwise the local model (if any) answers.
