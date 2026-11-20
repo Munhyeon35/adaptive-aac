@@ -73,7 +73,7 @@ try {
     throw new Error(`Condition not reached: ${expression}`);
   }
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  await until('document.querySelectorAll("#symbols button").length === 6 && document.querySelector("#symbols").getAttribute("aria-busy") === "false"');
+  await until('document.querySelectorAll("#symbols button").length === 16 && document.querySelector("#symbols").getAttribute("aria-busy") === "false"');
   await mkdir("artifacts", {recursive: true});
   async function screenshot(name) {
     const shot = await send("Page.captureScreenshot", {format: "png", captureBeyondViewport: true});
@@ -94,8 +94,11 @@ try {
   await until('document.querySelectorAll(".history-item").length === 1');
   await click('[data-close="history-dialog"]');
   await click("#all-open");
-  await evaluate('document.querySelector("#search").value = "화장실"; document.querySelector("#search").dispatchEvent(new Event("input"));');
-  assert.equal(await evaluate('document.querySelectorAll("#all-symbols button").length'), 1);
+  assert.equal(await evaluate('document.querySelectorAll("#all-symbols button").length'), 48);
+  await click("#all-next");
+  assert.equal(await evaluate('document.querySelector("#all-prev").disabled'), false);
+  assert.ok((await evaluate('document.querySelector("#all-page-label").textContent')).startsWith("2 /"));
+  await click("#all-prev");
   await click('#all-symbols [data-symbol="bathroom"]');
   await click('[data-close="all-dialog"]');
   assert.equal(await evaluate('document.querySelectorAll("#selected .token").length'), 1);
@@ -117,7 +120,7 @@ try {
   await click('[data-close="settings-dialog"]'); await click("#history-open");
   await until('document.querySelector("#history-list").textContent.includes("아직 저장한")');
   assert.deepEqual(errors, []);
-  console.log("PASS: browser communication, persistence, full vocabulary search, undo, static mode, mobile layout, consent, deletion. Screenshots: artifacts/*.png");
+  console.log("PASS: browser communication, persistence, full vocabulary pages, undo, static mode, mobile layout, consent, deletion. Screenshots: artifacts/*.png");
 } finally {
   chromium.kill(); bridge.kill();
   await new Promise((resolve) => setTimeout(resolve, 200));
