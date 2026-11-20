@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from aac.llm import PREDICTION_INSTRUCTIONS, prediction_input
-from aac.vocabulary import BY_ID, validate_ids
+from aac.prediction import model_candidates
+from aac.vocabulary import validate_ids
 
 
 def examples(records):
@@ -19,7 +20,7 @@ def examples(records):
             if key in seen:
                 continue
             seen.add(key)
-            allowed = [i for i in BY_ID if i not in prefix]
+            allowed = model_candidates(prefix, context=context, required=[next_id])
             yield {"messages": [
                 {"role": "system", "content": PREDICTION_INSTRUCTIONS},
                 {"role": "user", "content": json.dumps(prediction_input(prefix, [], allowed, context, 6), ensure_ascii=False)},

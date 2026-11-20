@@ -2,7 +2,12 @@
 
 import os
 
+from .runtime import CHAT_TEMPLATE_KWARGS
+
 MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct"
+# Vetted for this pipeline: text-only causal LM, safetensors, no remote code, q/v projections
+# in every layer (the LoRA target), and fits CPU FP32 memory on an 8 GB machine.
+SUPPORTED_MODELS = ("Qwen/Qwen2.5-0.5B-Instruct", "Qwen/Qwen3-0.6B", "LGAI-EXAONE/EXAONE-4.0-1.2B")
 
 
 def resolve_device(requested="auto"):
@@ -58,8 +63,8 @@ def generate_text(model, tokenizer, prompt, sampler=None, max_tokens=96, verbose
 
 def encode_example(tokenizer, row):
     messages = row["messages"]
-    prefix = tokenizer.apply_chat_template(messages[:-1], tokenize=True, add_generation_prompt=True)
-    tokens = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)
+    prefix = tokenizer.apply_chat_template(messages[:-1], tokenize=True, add_generation_prompt=True, **CHAT_TEMPLATE_KWARGS)
+    tokens = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False, **CHAT_TEMPLATE_KWARGS)
     if len(tokens) > 2048 or tokens[:len(prefix)] != prefix or len(tokens) <= len(prefix):
         raise ValueError("Training example is too long or its completion cannot be safely masked")
     return tokens, [-100] * len(prefix) + tokens[len(prefix):]

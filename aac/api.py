@@ -76,6 +76,8 @@ def create_app(service, port=8765, allowed_hosts=(), allowed_origins=(), auth=No
 
     @asynccontextmanager
     async def lifespan(_app):
+        if service.local_provider:
+            service.local_provider.preload()  # Cold start happens now, not on the user's first selection.
         yield
         if service.local_provider:
             service.local_provider.close()
