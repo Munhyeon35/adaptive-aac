@@ -76,8 +76,9 @@ class AacService:
         excluded = validate_ids(list(excluded), maximum=len(VOCABULARY))
         # The first board shows more starters; after a selection a short list keeps choices quick.
         limit = 6 if selected else 16
+        # Usage weights come from the stored aggregate, so they cover all confirmed messages, not just the recent 100.
         return recommend(selected, self.store.history(profile_id), category, context, excluded,
-                         limit=limit, provider=provider)
+                         limit=limit, provider=provider, usage=self.store.usage(profile_id))
 
     def sentence(self, profile_id, selected, context="any"):
         provider = self._provider(profile_id)
