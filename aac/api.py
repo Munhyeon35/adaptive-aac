@@ -4,16 +4,20 @@ from contextlib import asynccontextmanager
 import logging
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Cookie, Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, StrictBool, StrictInt, StrictStr
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .auth import SESSION_DAYS, AuthService, LoginFailed, LoginUnavailable
 from .config import ROOT
 from .storage import ProfileNotFound
 
 MAX_BODY_BYTES = 20000
+SESSION_COOKIE = "aac_session"
+STATE_COOKIE = "aac_oauth_state"
+CALLBACK_PATH = "/auth/google/callback"
 APP_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 # Swagger UI loads its bundle from jsDelivr and boots with an inline script.
@@ -63,7 +67,9 @@ def error(status, message):
     return JSONResponse({"error": message}, status_code=status)
 
 
-def create_app(service, port=8765, allowed_hosts=(), allowed_origins=()):
+def create_app(service, port=8765, allowed_hosts=(), allowed_origins=(), auth=None, secure_cookies=False):
+    auth = auth or AuthService(service.store)
+
     @asynccontextmanager
     async def lifespan(_app):
         yield
@@ -116,17 +122,58 @@ def create_app(service, port=8765, allowed_hosts=(), allowed_origins=()):
     async def missing_profile(_request, exc):
         return error(401, str(exc))
 
+    @app.exception_handler(LoginUnavailable)
+    async def login_unavailable(_request, _exc):
+        return error(503, "구글 로그인이 아직 설정되지 않았어요.")
+
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_request, exc):
         # Unknown paths and wrong methods look the same, so routes cannot be probed by method.
         return error(404, NOT_FOUND) if exc.status_code in (404, 405) else error(exc.status_code, BAD_REQUEST)
 
-    def profile_id(x_profile_id: str = Header(default="")):
-        return x_profile_id
+    def profile_id(x_profile_id: str = Header(default=""), aac_session: str = Cookie(default="")):
+        return auth.resolve_profile_id(aac_session, x_profile_id)
+
+    def cookie(response, name, value, max_age, path="/"):
+        response.set_cookie(name, value, max_age=max_age, path=path, httponly=True,
+                            secure=secure_cookies, samesite="lax")
+
+    @app.post("/api/auth/google/start", tags=["auth"])
+    def google_start(x_profile_id: str = Header(default="")):
+        """Begin Google sign-in. The browser then navigates to `url`; a first login keeps the anonymous profile's history."""
+        url, state = auth.start_google(x_profile_id)
+        response = JSONResponse({"url": url})
+        cookie(response, STATE_COOKIE, state, 600, CALLBACK_PATH)
+        return response
+
+    @app.get(CALLBACK_PATH, tags=["auth"])
+    def google_callback(code: str = "", state: str = "", aac_oauth_state: str = Cookie(default="")):
+        """Google redirects here. Sets the session cookie and returns to the app with `?login=success|failed`."""
+        try:
+            token = auth.complete_google(code, state, aac_oauth_state)
+        except (LoginFailed, OSError, ValueError) as exc:
+            # Only the failure type is logged; codes and tokens never enter logs.
+            logging.warning("Google login failed: %s", type(exc).__name__)
+            response = RedirectResponse("/?login=failed", status_code=303)
+        else:
+            response = RedirectResponse("/?login=success", status_code=303)
+            cookie(response, SESSION_COOKIE, token, SESSION_DAYS * 86400)
+        response.delete_cookie(STATE_COOKIE, path=CALLBACK_PATH)
+        return response
+
+    @app.get("/api/auth/me", tags=["auth"])
+    def me(aac_session: str = Cookie(default="")):
+        return auth.me(aac_session)
+
+    @app.post("/api/auth/logout", tags=["auth"])
+    def logout(aac_session: str = Cookie(default="")):
+        response = JSONResponse(auth.logout(aac_session))
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
 
     @app.get("/api/bootstrap", tags=["app"])
     def bootstrap():
-        return service.bootstrap()
+        return {**service.bootstrap(), "google_login_available": auth.google_available}
 
     @app.post("/api/profiles", tags=["profile"])
     def create_profile(body: ProfileCreate):

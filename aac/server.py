@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+from .auth import AuthService, GoogleOAuth
 from .config import ROOT, load_env
 from .llm import OpenAIProvider
 from .service import AacService
@@ -26,9 +27,15 @@ def build_app():
     if not path.is_absolute():
         path = ROOT / path
     port = int(os.environ.get("AAC_PORT", "8765"))
+    # The public URL decides the OAuth redirect URI and whether cookies are Secure (HTTPS only).
+    public_url = os.environ.get("AAC_PUBLIC_URL", "").rstrip("/") or f"http://localhost:{port}"
+    store = Store(path)
+    client_id, client_secret = os.environ.get("GOOGLE_CLIENT_ID", ""), os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    google = GoogleOAuth(client_id, client_secret, public_url + "/auth/google/callback") if client_id and client_secret else None
     from .api import create_app
-    app = create_app(AacService(Store(path), provider, local_provider), port,
-                     env_list("AAC_ALLOWED_HOSTS"), env_list("AAC_ALLOWED_ORIGINS"))
+    app = create_app(AacService(store, provider, local_provider), port,
+                     env_list("AAC_ALLOWED_HOSTS"), env_list("AAC_ALLOWED_ORIGINS"),
+                     auth=AuthService(store, google), secure_cookies=public_url.startswith("https://"))
     return app, port
 
 

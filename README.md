@@ -116,6 +116,21 @@ LLM에 보내는 데이터는 현재 선택한 그림, 사용자가 고른 상�
 
 구현 근거: [OpenAI Structured Outputs 공식 문서](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses). 실제 유료 API 호출은 구현 검증 과정에서 수행하지 않았으며, 테스트는 모의 응답을 사용합니다.
 
+## 구글 로그인
+
+로그인은 선택 사항입니다. 로그인하지 않아도 모든 기능을 쓸 수 있고, 로그인하면 다른 기기에서도 기록과 맞춤 추천을 이어서 씁니다. 처음 로그인할 때 그 기기의 익명 기록이 계정으로 옮겨집니다.
+
+`.env`에 Google OAuth 클라이언트(웹 애플리케이션 유형) 값을 넣으면 화면에 로그인 버튼이 나타납니다. 값이 없으면 버튼이 숨겨집니다.
+
+```bash
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+# 배포 시: 리디렉션 URI와 Secure 쿠키 기준이 되는 공개 주소
+AAC_PUBLIC_URL=https://aac.example.com
+```
+
+Google Cloud Console의 승인된 리디렉션 URI에 `<공개 주소>/auth/google/callback`을 등록합니다(로컬은 `http://localhost:8765/auth/google/callback`). 시크릿은 Git에 올리지 말고 서버에는 별도 경로로 전달하세요.
+
 ## 테스트와 평가
 
 `requirements-dev.txt`를 설치한 `.venv`에서 핵심 테스트 실행:
