@@ -1,10 +1,11 @@
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from aac.llm import OpenAIProvider
-from aac.prediction import recommend
+from aac.prediction import model_candidates, recommend, usage_profile
 from aac.sentences import generate_sentence, sentence_options
 from aac.storage import Store
 from aac.vocabulary import BY_ID, validate_ids
@@ -69,6 +70,67 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(result["source"], "llm")
         self.assertEqual([s["id"] for s in result["symbols"]][:2], ["egg", "soup"])
         self.assertEqual(len(result["symbols"]), 6)
+
+    def test_personal_transition_overtakes_semantic_matches_after_repeated_use(self):
+        top = lambda history: [s["id"] for s in recommend(["eat"], history)["symbols"]]
+        self.assertNotIn("mulberry:acorn", top([]))
+        # One use of an unrelated symbol stays off the first screen (motor stability)...
+        self.assertNotIn("mulberry:acorn", top([{"symbols": ["eat", "mulberry:acorn"]}] * 4))
+        # ...a habit of five confirmations brings it to the top row.
+        self.assertIn("mulberry:acorn", top([{"symbols": ["eat", "mulberry:acorn"]}] * 5)[:2])
+        # A related symbol needs only one confirmation.
+        self.assertEqual(top([{"symbols": ["eat", "egg"]}])[0], "egg")
+
+    def test_frequent_symbol_does_not_flood_unrelated_screen(self):
+        history = [{"symbols": ["eat", "rice"]}] * 100
+        drinks = [s["id"] for s in recommend(["drink"], history)["symbols"]]
+        self.assertNotIn("rice", drinks[:4])
+        self.assertEqual(recommend(["eat"], history)["symbols"][0]["id"], "rice")
+
+    def test_recent_use_outweighs_old_use(self):
+        recent = datetime.now(timezone.utc).isoformat()
+        old = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+        history = ([{"symbols": ["eat", "egg"], "created_at": recent}] * 3
+                   + [{"symbols": ["eat", "soup"], "created_at": old}] * 6)
+        ranked = [s["id"] for s in recommend(["eat"], history)["symbols"]]
+        self.assertLess(ranked.index("egg"), ranked.index("soup") if "soup" in ranked else 99)
+
+    def test_first_screen_learns_starting_symbol_and_full_prefix(self):
+        starts = [s["id"] for s in recommend([], [{"symbols": ["thanks"]}] * 5, limit=16)["symbols"]]
+        self.assertIn("thanks", starts[:3])
+        history = [{"symbols": ["want", "toy", "play"]}] * 3
+        self.assertEqual(recommend(["want", "toy"], history)["symbols"][0]["id"], "play")
+
+    def test_usage_profile_is_the_db_contract(self):
+        history = [{"symbols": ["eat", "bread", "more"], "created_at": "not-a-date"}]
+        usage = usage_profile(history)
+        self.assertEqual(usage["starts"], {"eat": 1.0})
+        self.assertEqual(usage["transitions"]["bread"], {"more": 1.0})
+        self.assertEqual(usage["continuations"][("eat", "bread")], {"more": 1.0})
+        # A store-supplied aggregate gives the same ranking as raw history, and keys may be omitted.
+        self.assertEqual(recommend(["eat"], history)["symbols"], recommend(["eat"], usage=usage)["symbols"])
+        self.assertEqual(recommend(["eat"], usage={})["symbols"], recommend(["eat"])["symbols"])
+
+    def test_model_candidates_skip_uncategorised_symbols_until_confirmed(self):
+        for selected in ([], ["eat"], ["thanks"]):
+            pool = model_candidates(selected)
+            self.assertLessEqual(len(pool), 80)
+            self.assertTrue(all(BY_ID[i]["category"] for i in pool))
+            self.assertFalse(set(pool) & set(selected))
+        history = [{"symbols": ["eat", "mulberry:acorn"]}]
+        self.assertIn("mulberry:acorn", model_candidates(["eat"], history))
+        self.assertIn("mulberry:acorn", model_candidates(["eat"], required=["mulberry:acorn"]))
+        self.assertNotIn("bread", model_candidates(["eat"], excluded=["bread"]))
+
+    def test_model_proposals_outside_sent_candidates_fall_back(self):
+        class Recorder(FakeProvider):
+            def recommend(self, selected, history, candidates, context, limit):
+                self.candidates = candidates
+                return ["mulberry:A"]
+        provider = Recorder()
+        result = recommend(["eat"], provider=provider)
+        self.assertNotIn("mulberry:A", provider.candidates)
+        self.assertEqual(result["source"], "fallback")
 
     def test_category_remains_accessible(self):
         result = recommend(["eat"], category="place")
@@ -166,6 +228,10 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertNotIn("private", json.dumps(rows))
         self.assertEqual(json.loads(rows[1]["messages"][-1]["content"]), {"ids": ["bread"]})
+        allowed = json.loads(rows[1]["messages"][1]["content"])["allowed_vocabulary"]
+        self.assertLessEqual(len(allowed), 81)
+        reviewed = list(examples([{"symbols": ["eat", "mulberry:acorn"], "context": "any"}]))
+        self.assertIn("mulberry:acorn", [i["id"] for i in json.loads(reviewed[1]["messages"][1]["content"])["allowed_vocabulary"]])
 
 
 if __name__ == "__main__":
