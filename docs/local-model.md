@@ -43,9 +43,12 @@ CPU 전용으로 Linux·Windows의 큰 CUDA 패키지 다운로드를 피하려�
 - 모델 리비전: 다운로드 시 커밋 SHA를 조회하고 그 SHA로 다운로드합니다.
 - 학습: 마지막 4개 레이어, 배치 1, 학습률 0.0001, 기본 80 iterations, prompt masking, gradient checkpointing. Transformers는 q/v projection에 rank 8 LoRA를 적용합니다. CUDA QLoRA는 bitsandbytes NF4와 double quantization을 사용하며, CPU는 FP32 LoRA입니다.
 - 입력 최대 2048 토큰. 넘는 예제는 조용히 자르지 않고 중단합니다.
-- 추론: greedy decoding, 최대 생성 96 토큰, 별도 Python 워커에 모델을 한 번 로드. 서버가 워커를 재사용하고 요청을 직렬화합니다.
+- 추론: greedy decoding, 최대 생성 토큰은 추천 개수에 맞춰 96~256(6개면 96), 별도 Python 워커에 모델을 한 번 로드. 서버가 워커를 재사용하고 요청을 직렬화합니다.
 - 추론에 추가 HTTP 서버나 포트가 필요하지 않습니다. Windows에서도 가능한 reader thread와 queue로 stdin/stdout JSON을 교환합니다. 모델 워커는 Hugging Face offline 모드, UTF-8로 실행합니다.
 - MLX 추론 25초, Transformers 추론 120초 초과/동시 요청 대기 1초 초과/파싱 오류/잘못된 어휘는 규칙 추천으로 복구합니다. 브라우저는 서버가 알리는 제한에 맞춰 각각 35초/125초 대기합니다.
+- 서버 시작 시 워커를 백그라운드에서 미리 로드합니다. 워커는 로드가 끝나면 ready 신호를 보내며, 로드 제한(기본 300초)은 생성 제한과 별도입니다. 로드 중 들어온 요청은 규칙 추천을 사용합니다.
+- 워커 안의 단일 생성 오류는 모델을 유지한 채 규칙 추천으로 복구합니다. 응답 없음·파이프 종료·잘못된 응답·로드 실패만 워커를 종료하고 10초 대기 후 다시 시작합니다.
+- 워커 진단 로그는 `var/logs/local-worker.log`(git 제외, 1MB 초과 시 새로 시작)에 남습니다. 라이브러리 경고와 예외 클래스 이름만 기록하며 프롬프트·선택·이력은 기록하지 않습니다.
 
 출력의 `ids`는 고정 어휘, 요청 후보, 이미 선택한 그림 제외, 중복 제외, 개수 제한을 통과해야 합니다. 학습 지표는 규칙 fallback으로 보정하지 않은 **모델 자체 생성**으로 계산합니다.
 
@@ -106,3 +109,23 @@ AAC_LOCAL_DEVICE=cpu
 - [MLX LM Python 추론 API](https://github.com/ml-explore/mlx-lm#python-api)
 - [PEFT 양자화 학습](https://huggingface.co/docs/peft/en/developer_guides/quantization)
 - [bitsandbytes 플랫폼 지원](https://huggingface.co/docs/bitsandbytes/en/installation)
+
+## 모델 서빙 벤치마크
+
+`scripts/benchmark_model.py`는 **모델 경로만** 측정합니다. AAC 상호작용 비용 시뮬레이션인 `scripts/evaluate.py`(평가 담당)와는 별개입니다.
+
+```bash
+.venv-torch/bin/python -m scripts.benchmark_model            # Windows: .venv-torch\Scripts\python.exe -m scripts.benchmark_model
+python3 -m scripts.benchmark_model --engines deterministic   # 모델 없이 기준선만
+```
+
+- 엔진: `deterministic`(모델 없는 기준선), `base`(adapter 없는 기본 모델), `adapter`(활성 LoRA). 한 번에 하나만 메모리에 올립니다.
+- 입력: 기본값은 활성 실행의 `data/test.jsonl`. 후보 목록은 파일에 저장된 값이 아니라 **현재 서빙 규칙**(`model_candidates`)으로 다시 만듭니다.
+- 판정: 서버와 같은 `validate_proposal` 규칙. 잘못된 출력은 miss로 세며 규칙 추천으로 보정하지 않습니다.
+- 지표: 유효 출력률, 오류 유형, hit@1/3/6, MRR, `distinct_top1`, 상수 응답 기준선, 콜드 스타트, 지연 p50/p95.
+- 화면 지표: `served_hit_at_k`는 사용자가 실제로 보는 화면(모델 ID를 앞에 두고 나머지는 규칙 순서로 채움, 오류 시 규칙 화면)을 채점합니다. 모델 자체의 성능은 원시 지표로, 제품 화면은 served 지표로 판단합니다.
+- 결과: `var/benchmarks/model-<UTC 시각>.json`(git 제외).
+
+served 지표는 모델 성능을 부풀릴 수 있습니다. 현재 합성 split처럼 `more`/`not` 정답이 많으면, `not`만 반복하는 붕괴 모델도 규칙 순서 앞에 `not` 하나를 붙이는 효과로 served hit@3가 높게 나옵니다. 그래서 모델 선택에는 원시 지표와 `distinct_top1`을 함께 봐야 합니다.
+
+`distinct_top1`이 1이고 hit@1이 상수 응답 기준선과 같으면 모델이 한 ID만 반복하는 붕괴 상태입니다. 기본 test split은 학습 활성화 판단에도 쓰이므로, 최종 보고에는 손대지 않은 별도 holdout을 `--cases`로 지정하세요.
