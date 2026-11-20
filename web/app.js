@@ -3,6 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const state = {
   vocabulary: [], categories: [], byId: new Map(), profile: null, cloudAvailable: false, localModelAvailable: false,
+  account: null, googleLoginAvailable: false,
   recommendationTimeout: 35000,
   selected: [], recommendations: [], excluded: [], category: null, context: "any",
   mode: "adaptive", page: 0, clicks: 0, started: null, revision: 0, request: 0,
@@ -31,13 +32,85 @@ async function api(path, body) {
       body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal,
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "요청을 처리하지 못했어요.");
+    if (!response.ok) throw Object.assign(new Error(data.error || "요청을 처리하지 못했어요."), {status: response.status});
     return data;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("연결이 오래 걸리고 있어요. 다시 시도해 주세요.");
     if (error instanceof TypeError) throw new Error("서버에 연결할 수 없어요. 서버가 실행 중인지 확인해 주세요.");
     throw error;
   } finally { clearTimeout(timeout); }
+}
+
+function initial(name) { return Array.from((name || "나").trim())[0] || "나"; }
+
+function renderAccount() {
+  const button = $("account-open"), user = state.account;
+  button.hidden = !state.googleLoginAvailable && !user;
+  button.classList.toggle("signed-in", Boolean(user));
+  if (user) {
+    const avatar = node("span", "avatar", initial(user.name));
+    avatar.setAttribute("aria-hidden", "true");
+    button.replaceChildren(avatar, node("span", "account-label", user.name || user.email));
+    button.setAttribute("aria-label", `내 계정: ${user.name || user.email}`);
+  } else {
+    button.replaceChildren(document.createTextNode("로그인"));
+    button.setAttribute("aria-label", "로그인");
+  }
+}
+
+function openAccount() {
+  const user = state.account;
+  $("login-view").hidden = Boolean(user); $("account-view").hidden = !user;
+  $("account-title").textContent = user ? "내 계정" : "로그인하고 이어서 이야기해요";
+  if (user) {
+    $("account-avatar").textContent = initial(user.name);
+    $("account-name").textContent = user.name || "이름 없음";
+    $("account-email").textContent = user.email;
+  }
+  $("google-login").disabled = false; $("google-login-label").textContent = "Google 계정으로 로그인";
+  $("account-status").textContent = "";
+  $("account-dialog").showModal();
+}
+
+async function loginWithGoogle() {
+  $("google-login").disabled = true; $("google-login-label").textContent = "Google로 이동하고 있어요…";
+  $("account-status").textContent = "";
+  try {
+    // The anonymous profile ID travels in the header, so a first login keeps this device's history.
+    const {url} = await api("/api/auth/google/start", {});
+    window.location.assign(url);
+  } catch (error) {
+    $("google-login").disabled = false; $("google-login-label").textContent = "Google 계정으로 로그인";
+    $("account-status").textContent = error.message;
+  }
+}
+
+async function logout() {
+  $("logout").disabled = true;
+  try {
+    await api("/api/auth/logout", {});
+    state.account = null;
+    state.profile = await api("/api/profiles", {name: "나"}); persist("aac.profile", state.profile.id);
+    $("account-dialog").close(); renderAccount(); reset();
+    showAccountNotice("로그아웃했어요. 이 기기에서는 새 사용자로 시작해요.");
+  } catch (error) { $("account-status").textContent = error.message; }
+  finally { $("logout").disabled = false; }
+}
+
+function showAccountNotice(text) {
+  $("account-notice").textContent = text; $("account-notice").hidden = false;
+  clearTimeout(showAccountNotice.timer);
+  showAccountNotice.timer = setTimeout(() => { $("account-notice").hidden = true; }, 7000);
+}
+
+function readLoginResult() {
+  const params = new URLSearchParams(window.location.search), result = params.get("login");
+  if (!result) return;
+  params.delete("login");
+  const query = params.toString();
+  history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : "") + window.location.hash);
+  if (result === "success" && state.account) showAccountNotice(`${state.account.name || "회원"}님, 로그인했어요. 이제 이야기 기록이 계정에 저장돼요.`);
+  else if (result === "failed") showError("Google 로그인을 마치지 못했어요. 잠시 후 다시 시도해 주세요.");
 }
 
 function touch() {
@@ -292,6 +365,9 @@ function bind() {
   $("output-dialog").addEventListener("close", () => { if ("speechSynthesis" in window) speechSynthesis.cancel(); });
   $("new-message").addEventListener("click", () => { $("output-dialog").close(); reset(); $("board").focus(); });
   $("history-open").addEventListener("click", openHistory);
+  $("account-open").addEventListener("click", openAccount);
+  $("google-login").addEventListener("click", loginWithGoogle);
+  $("logout").addEventListener("click", logout);
   $("settings-open").addEventListener("click", () => {
     $("profile-name").value = state.profile.name; $("cloud-enabled").checked = state.profile.cloud_enabled;
     $("cloud-enabled").disabled = !state.cloudAvailable; $("large-text").checked = document.documentElement.classList.contains("large");
@@ -329,13 +405,18 @@ async function start() {
     state.byId = new Map(state.vocabulary.map((symbol) => [symbol.id, symbol])); state.cloudAvailable = bootstrap.cloud_available;
     state.localModelAvailable = bootstrap.local_model_available;
     state.recommendationTimeout = bootstrap.recommendation_timeout_ms || 35000;
+    state.googleLoginAvailable = Boolean(bootstrap.google_login_available);
+    const auth = await api("/api/auth/me");
+    state.account = auth.authenticated ? auth.user : null;
     const profileId = stored("aac.profile");
-    if (profileId) {
-      state.profile = {id: profileId};
-      try { state.profile = await api("/api/profile"); }
-      catch (error) { if (!error.message.includes("사용자 정보를")) throw error; state.profile = null; }
+    if (state.account || profileId) {
+      // With a session the server answers with the account's profile, whatever ID is stored.
+      state.profile = {id: profileId || ""};
+      try { state.profile = await api("/api/profile"); persist("aac.profile", state.profile.id); }
+      catch (error) { if (error.status !== 401) throw error; state.profile = null; }
     }
     if (!state.profile) { state.profile = await api("/api/profiles", {name: "나"}); persist("aac.profile", state.profile.id); }
+    renderAccount(); readLoginResult();
     document.documentElement.classList.toggle("large", stored("aac.large") === "true");
     bind(); renderCategories(); renderSelected(); await updateBoard();
   } catch (error) { showError(`${error.message} 페이지를 새로 열어 다시 시도해 주세요.`); }
