@@ -46,8 +46,13 @@ class Store:
                 CREATE TABLE IF NOT EXISTS oauth_states (
                     state_hash TEXT PRIMARY KEY, verifier TEXT NOT NULL, profile_id TEXT, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS usage_weights (
+                    profile_id TEXT NOT NULL REFERENCES profiles(id), kind TEXT NOT NULL,
+                    prefix TEXT NOT NULL, symbol_id TEXT NOT NULL, weight REAL NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, kind, prefix, symbol_id)
+                );
             """)
-            # Serialize both migrations for concurrent openers of an existing database.
+            # Serialize the migrations (columns and the one-time usage backfill) for concurrent openers.
             db.execute("BEGIN IMMEDIATE")
             if "cards_seen" not in {row["name"] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN cards_seen INTEGER")
@@ -56,6 +61,11 @@ class Store:
             if "user_id" not in columns:
                 db.execute("ALTER TABLE profiles ADD COLUMN user_id TEXT REFERENCES users(id)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS profiles_by_user ON profiles(user_id) WHERE user_id IS NOT NULL")
+            if db.execute("PRAGMA user_version").fetchone()[0] < 1:
+                # Usage aggregates start from every message confirmed before they existed.
+                for row in db.execute("SELECT DISTINCT profile_id FROM messages").fetchall():
+                    _rebuild_usage(db, row["profile_id"])
+                db.execute("PRAGMA user_version=1")
 
     @contextmanager
     def connect(self):
@@ -98,16 +108,44 @@ class Store:
             existing = db.execute("SELECT profile_id FROM messages WHERE id=?", (message_id,)).fetchone()
             if existing and existing["profile_id"] != profile_id:
                 raise ValueError("메시지 식별자가 중복되었습니다.")
-            db.execute("""INSERT OR IGNORE INTO messages
+            now = datetime.now(timezone.utc)
+            inserted = db.execute("""INSERT OR IGNORE INTO messages
                 (id, profile_id, symbols, sentence, mode, context, selection_count, elapsed_ms, created_at, cards_seen)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                        (message_id, profile_id, json.dumps(symbols), sentence, mode, context,
-                        selection_count, elapsed_ms, datetime.now(timezone.utc).isoformat(), cards_seen))
+                        selection_count, elapsed_ms, now.isoformat(), cards_seen)).rowcount
+            # Only a newly stored message counts; a retried confirm must not double the weights.
+            # The insert above already holds the write lock, so this read-modify-write cannot race.
+            if inserted:
+                _add_usage(db, profile_id, symbols, now)
         return {"id": message_id, "saved": True}
 
     def clear_history(self, profile_id):
         with self.connect() as db:
             db.execute("DELETE FROM messages WHERE profile_id=?", (profile_id,))
+            db.execute("DELETE FROM usage_weights WHERE profile_id=?", (profile_id,))
+
+    def usage(self, profile_id, now=None):
+        """Recency-weighted usage in the dict shape of aac.prediction.usage_profile (PR #5 contract)."""
+        now = now or datetime.now(timezone.utc)
+        with self.connect() as db:
+            rows = db.execute("SELECT kind, prefix, symbol_id, weight, updated_at FROM usage_weights WHERE profile_id=?",
+                              (profile_id,)).fetchall()
+        usage = {kind: {} for kind in USAGE_KINDS}
+        for row in rows:
+            weight = row["weight"] * _decay(row["updated_at"], now)
+            if row["kind"] in ("symbols", "starts"):
+                usage[row["kind"]][row["symbol_id"]] = weight
+            else:
+                prefix = json.loads(row["prefix"])
+                key = prefix[0] if row["kind"] == "transitions" else tuple(prefix)
+                usage[row["kind"]].setdefault(key, {})[row["symbol_id"]] = weight
+        return usage
+
+    def rebuild_usage(self, profile_id):
+        """Recompute aggregates from confirmed messages, e.g. after the counting rules change."""
+        with self.connect() as db:
+            _rebuild_usage(db, profile_id)
 
     def stats(self, profile_id):
         with self.connect() as db:
@@ -192,6 +230,55 @@ class Store:
         if token:
             with self.connect() as db:
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
+
+
+USAGE_KINDS = ("symbols", "starts", "transitions", "continuations")
+USAGE_HALF_LIFE_DAYS = 30
+
+
+def usage_events(sequence):
+    """(kind, prefix, symbol_id) counted once per confirmed message, matching usage_profile in PR #5."""
+    if not sequence:
+        return []
+    events = [("symbols", (), symbol_id) for symbol_id in dict.fromkeys(sequence)]
+    events.append(("starts", (), sequence[0]))
+    for index in range(1, len(sequence)):
+        events.append(("transitions", (sequence[index - 1],), sequence[index]))
+        if index >= 2:
+            events.append(("continuations", tuple(sequence[:index]), sequence[index]))
+    return events
+
+
+def _decay(updated_at, now):
+    moment = datetime.fromisoformat(updated_at)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    age_days = max(0.0, (now - moment).total_seconds() / 86400)
+    return 0.5 ** (age_days / USAGE_HALF_LIFE_DAYS)
+
+
+def _prefix_key(prefix):
+    # JSON keeps IDs such as "mulberry:a_-_lower_case" unambiguous inside one column.
+    return json.dumps(list(prefix), ensure_ascii=False, separators=(",", ":"))
+
+
+def _add_usage(db, profile_id, sequence, now, amount=1.0):
+    """weight = weight x 0.5^(days since update / 30) + amount, stamped now."""
+    for kind, prefix, symbol_id in usage_events(sequence):
+        key = (profile_id, kind, _prefix_key(prefix), symbol_id)
+        row = db.execute("SELECT weight, updated_at FROM usage_weights WHERE profile_id=? AND kind=? AND prefix=? AND symbol_id=?",
+                         key).fetchone()
+        weight = (row["weight"] * _decay(row["updated_at"], now) if row else 0.0) + amount
+        db.execute("INSERT OR REPLACE INTO usage_weights(profile_id, kind, prefix, symbol_id, weight, updated_at) "
+                   "VALUES (?, ?, ?, ?, ?, ?)", (*key, weight, now.isoformat()))
+
+
+def _rebuild_usage(db, profile_id):
+    db.execute("DELETE FROM usage_weights WHERE profile_id=?", (profile_id,))
+    now = datetime.now(timezone.utc)
+    for row in db.execute("SELECT symbols, created_at FROM messages WHERE profile_id=?", (profile_id,)).fetchall():
+        # Each message contributes its weight decayed to now, the same total incremental updates reach.
+        _add_usage(db, profile_id, json.loads(row["symbols"]), now, amount=_decay(row["created_at"], now))
 
 
 def token_hash(token):
