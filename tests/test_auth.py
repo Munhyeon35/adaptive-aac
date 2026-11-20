@@ -1,5 +1,5 @@
 import base64
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import io
 import json
 from pathlib import Path
@@ -145,7 +145,7 @@ class AuthTests(unittest.TestCase):
     def test_sessions_and_states_are_stored_only_as_hashes(self):
         self.login()
         token = self.client.cookies.get("aac_session")
-        with sqlite3.connect(self.store.path) as db:
+        with closing(sqlite3.connect(self.store.path)) as db:
             stored = [row[0] for row in db.execute("SELECT token_hash FROM sessions")]
         self.assertEqual(len(stored), 1)
         self.assertNotEqual(stored[0], token)
@@ -159,7 +159,8 @@ class AuthTests(unittest.TestCase):
 
     def test_existing_database_gains_account_columns(self):
         path = Path(self.tmp.name) / "old.sqlite3"
-        with sqlite3.connect(path) as db:
+        # closing(): sqlite3's own context manager commits but leaves the file open, which Windows cannot delete.
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, cloud_enabled INTEGER NOT NULL DEFAULT 0)")
             db.execute("INSERT INTO profiles(id, name) VALUES ('old', '나')")
         self.assertIsNone(Store(path).profile("old")["user_id"])
