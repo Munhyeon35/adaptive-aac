@@ -9,12 +9,12 @@ import {setTimeout as delay} from "node:timers/promises";
 
 const origin = "http://localhost:8765";
 
-export async function withBrowser(run, {localManifest} = {}) {
+export async function withBrowser(run, {localManifest, visible = false} = {}) {
   const executable = process.env.CHROMIUM_PATH;
   if (!executable) throw new Error("Set CHROMIUM_PATH to your Chrome or Chromium executable.");
   const profile = await mkdtemp(join(tmpdir(), "aac-chromium-"));
   const chromium = spawn(executable, [
-    "--headless", "--remote-debugging-pipe", "--no-first-run", "--disable-background-networking",
+    ...(visible ? ["--window-size=1365,1000"] : ["--headless"]), "--remote-debugging-pipe", "--no-first-run", "--disable-background-networking",
     `--user-data-dir=${profile}`, "about:blank",
   ], {stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"]});
   const bridge = spawn(process.env.PYTHON || "python3", [

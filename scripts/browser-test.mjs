@@ -1,6 +1,7 @@
 // Optional browser integration check. Requires Node 20+ and CHROMIUM_PATH.
 import {mkdir, writeFile} from "node:fs/promises";
 import assert from "node:assert/strict";
+import {readEvalCards, showEvalToast, trackEvalCards} from "./eval-overlay.mjs";
 import {withBrowser} from "./browser-harness.mjs";
 
 await withBrowser(async ({send, evaluate, until, errors, navigate}) => {
@@ -13,6 +14,7 @@ await withBrowser(async ({send, evaluate, until, errors, navigate}) => {
     await writeFile(`artifacts/${name}.png`, Buffer.from(shot.data, "base64"));
   }
   await screenshot("desktop");
+  await trackEvalCards({evaluate});
   await click('[data-symbol="eat"]');
   await until('document.querySelector("#symbols [data-symbol=bread]") !== null');
   await click('#symbols [data-symbol="bread"]');
@@ -22,6 +24,18 @@ await withBrowser(async ({send, evaluate, until, errors, navigate}) => {
   await until('document.querySelector("#save-status").textContent === "내 이야기에 저장했어요."');
   assert.equal(await evaluate('document.querySelector("#output-text").textContent'), "빵을 먹고 싶어요.");
   await screenshot("message");
+  const exposures = await readEvalCards({evaluate});
+  assert.ok(exposures.total >= exposures.previews.length);
+  assert.ok(exposures.previews.some((card) => card.label === "빵" && card.image === "/symbols/bread.svg"));
+  await showEvalToast({evaluate}, {
+    durationMs: 1234, completed: true, count: exposures.total, previews: exposures.previews, score: 5,
+  });
+  assert.equal(await evaluate('document.getElementById("aac-eval-result").matches(":popover-open")'), true);
+  assert.match(await evaluate('document.querySelector("#aac-eval-result [role=status]").textContent'), /완료 시간 1.23초 · 카드 노출/);
+  assert.ok(await evaluate('document.querySelector("#aac-eval-result img[src=\"/symbols/bread.svg\"]") !== null'));
+  await screenshot("eval-result");
+  await click("#aac-eval-result button");
+  assert.equal(await evaluate('document.getElementById("aac-eval-result")'), null);
   await click("#new-message");
   await click("#history-open");
   await until('document.querySelectorAll(".history-item").length === 1');

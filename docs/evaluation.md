@@ -8,7 +8,7 @@ Python 3.11+, Node 20+, Chrome 또는 Chromium, 로그인된 Codex CLI가 필요
 PYTHON=.venv/bin/python CHROMIUM_PATH=/absolute/path/to/chrome node scripts/evaluate-agent.mjs --persona direct_touch_motor --task food_request --output artifacts/agent-evaluation.json
 ```
 
-필터 없이 `make evaluate-agent`를 실행하면 두 사용자 유형과 일곱 의도를 기본 그림판과 맞춤 추천에서 비교합니다. `--mode`, `--max-turns`, `--model`, `--screenshots`로 단일 모드, 행동 한도, 모델, 관찰 화면 저장을 지정할 수 있습니다. 평가가 길어질 수 있으며 `--output`은 매 시도가 끝날 때마다 갱신됩니다. `PYTHON`과 `AAC_CODEX`로 실행 파일을 지정할 수 있습니다.
+필터 없이 `make evaluate-agent`를 실행하면 두 사용자 유형과 일곱 의도를 기본 그림판과 맞춤 추천에서 비교합니다. `--mode`, `--max-turns`, `--model`로 단일 모드, 행동 한도, 모델을 지정할 수 있습니다. `--show-browser`를 사용하면 평가를 화면으로 보고, 종료 토스트에서 완료 시간과 노출 횟수, 실제 노출된 카드의 이미지·이름을 확인할 수 있습니다. `--screenshots`는 관찰 이미지와 결과 토스트(`result.png`)를 저장합니다. 평가가 길어질 수 있으며 `--output`은 매 시도가 끝날 때마다 갱신됩니다. `PYTHON`과 `AAC_CODEX`로 실행 파일을 지정할 수 있습니다.
 
 `--local-manifest var/active-model.json`과 해당 모델의 `PYTHON`을 추가하면 맞춤 추천에 설치된 로컬 Qwen을 사용합니다. `board_sources`에서 적용된 추천 엔진을 확인할 수 있습니다. 비전 LLM은 어느 조건에서도 사용자 행동과 자기 평가를 맡습니다.
 

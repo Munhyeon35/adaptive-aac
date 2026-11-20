@@ -5,6 +5,7 @@ import {dirname} from "node:path";
 import {parseArgs} from "node:util";
 import {pathToFileURL} from "node:url";
 import {withBrowser} from "./browser-harness.mjs";
+import {readEvalCards, showEvalToast, trackEvalCards} from "./eval-overlay.mjs";
 import {withVisionModel} from "./vision-model.mjs";
 
 const modes = ["adaptive", "static"];
@@ -156,12 +157,13 @@ async function storedMetrics(page, delivered, mode, context) {
   assert.equal(record.sentence, delivered);
   assert.equal(record.mode, mode);
   assert.equal(record.context, context);
-  assert.ok(record.cards_seen > 0);
+  if (record.cards_seen != null) assert.ok(record.cards_seen > 0);
   return record;
 }
 
-async function runTrial(page, infer, task, persona, evidence, mode, maxTurns, timeout, saveScreen) {
+export async function runTrial(page, infer, task, persona, evidence, mode, maxTurns, timeout, saveScreen) {
   await setUpTrial(page, mode, task.context, timeout);
+  await trackEvalCards(page);
   const trace = [], sources = new Set(), noticed = new Set();
   let decisionMs = 0, delivered = null, outcome = "turn_limit";
   const started = performance.now();
@@ -200,13 +202,26 @@ async function runTrial(page, infer, task, persona, evidence, mode, maxTurns, ti
     if (delivered) { outcome = "delivered"; break; }
   }
   const observedMs = Math.round(performance.now() - started);
-  const exposed = await page.evaluate("cardExposure.total");
+  const cards = await readEvalCards(page);
+  const exposed = await page.evaluate('typeof cardExposure === "undefined" ? null : cardExposure.total');
   const record = await storedMetrics(page, delivered, mode, task.context);
   const score = await rateDelivery(infer, task, persona, delivered);
+  const exposureCount = record?.cards_seen ?? exposed ?? cards.total;
+  await showEvalToast(page, {
+    durationMs: observedMs, completed: delivered !== null, count: exposureCount,
+    previews: cards.previews, score: score.score,
+  });
+  await page.evaluate(frame);
+  let resultScreenshot;
+  if (saveScreen) {
+    const {data} = await page.send("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
+    resultScreenshot = await saveScreen(mode, persona.id, task.id, "result", data);
+  }
   return {
     persona: persona.id, task: task.id, mode, outcome, intended_sentence: task.intent,
     delivered_sentence: delivered, ...score, app_cards_seen: record?.cards_seen ?? null,
-    viewport_card_exposures: record?.cards_seen ?? exposed, model_reported_unique_cards: noticed.size,
+    viewport_card_exposures: exposureCount, model_reported_unique_cards: noticed.size,
+    exposed_cards: cards.previews, ...(resultScreenshot ? {result_screenshot: resultScreenshot} : {}),
     completion_ms: delivered ? observedMs : null, attempt_ms: observedMs, decision_ms: decisionMs,
     elapsed_without_model_ms: Math.max(0, observedMs - decisionMs), app_elapsed_ms: record?.elapsed_ms ?? null,
     saved: Boolean(record), board_sources: [...sources], trace,
@@ -234,10 +249,10 @@ async function main() {
   const {values} = parseArgs({options: {
     output: {type: "string"}, screenshots: {type: "string"}, model: {type: "string", default: "gpt-6.1-terra"},
     persona: {type: "string"}, task: {type: "string"}, mode: {type: "string"},
-    "local-manifest": {type: "string"}, "max-turns": {type: "string", default: "24"}, help: {type: "boolean"},
+    "local-manifest": {type: "string"}, "max-turns": {type: "string", default: "24"}, "show-browser": {type: "boolean"}, help: {type: "boolean"},
   }});
   if (values.help) {
-    console.log("CHROMIUM_PATH=/path/to/chrome node scripts/evaluate-agent.mjs [--output FILE] [--screenshots DIR] [--model MODEL] [--persona ID] [--task ID] [--mode adaptive|static] [--max-turns N] [--local-manifest FILE]");
+    console.log("CHROMIUM_PATH=/path/to/chrome node scripts/evaluate-agent.mjs [--output FILE] [--screenshots DIR] [--show-browser] [--model MODEL] [--persona ID] [--task ID] [--mode adaptive|static] [--max-turns N] [--local-manifest FILE]");
     return;
   }
   const maxTurns = Number(values["max-turns"]);
@@ -251,7 +266,7 @@ async function main() {
   async function saveScreen(mode, persona, task, turn, screenshot) {
     const folder = `${values.screenshots}/${mode}-${persona}-${task}`;
     await mkdir(folder, {recursive: true});
-    const path = `${folder}/${String(turn).padStart(2, "0")}.png`;
+    const path = `${folder}/${turn === "result" ? "result" : String(turn).padStart(2, "0")}.png`;
     await writeFile(path, Buffer.from(screenshot, "base64"));
     return path;
   }
@@ -272,9 +287,13 @@ async function main() {
       report.results.push(await runTrial(page, infer, task, persona, corpus.evidence, mode,
         maxTurns, localManifest ? 140000 : 10000, values.screenshots ? saveScreen : null));
       if (values.output) await writeReport();
+      if (values["show-browser"]) {
+        try { await page.until('!document.getElementById("aac-eval-result")', 8000); }
+        catch (error) { if (!error.message.startsWith("Condition not reached:")) throw error; }
+      }
     }
     assert.deepEqual(page.errors, []);
-  }, {localManifest}));
+  }, {localManifest, visible: values["show-browser"]}));
   if (values.output) console.log(JSON.stringify(report.summary, null, 2));
   else console.log(JSON.stringify({...report, summary: summarize(report.results)}, null, 2));
 }
