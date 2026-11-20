@@ -6,15 +6,17 @@
 
 ## 바로 실행
 
-기본 그림판과 규칙 추천은 Windows·macOS·Linux에서 Python **3.11 이상**만 있으면 됩니다. 아래의 **로컬 모델 설치**를 완료하면 Qwen 추천을 사용합니다.
+기본 그림판과 규칙 추천은 Windows·macOS·Linux에서 Python **3.11 이상**과 서버 패키지(FastAPI, uvicorn)만 있으면 됩니다. 아래의 **로컬 모델 설치**를 완료하면 Qwen 추천을 사용합니다.
 
 ```bash
 git clone https://github.com/Munhyeon35/adaptive-aac.git
 cd adaptive-aac
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt   # Windows: .venv\Scripts\python
 python run.py
 ```
 
-브라우저에서 **http://localhost:8765**를 여세요. 종료는 `Ctrl+C`입니다.
+브라우저에서 **http://localhost:8765**를 여세요. API 문서(Swagger)는 **http://localhost:8765/docs**에 있습니다. 종료는 `Ctrl+C`입니다.
 
 macOS·Linux에서 `python` 명령이 없다면 `python3`, Windows에서는 `py -3.11`을 사용하세요. 비공개 저장소이므로 clone하려면 저장소 접근 권한이 필요합니다. 어떤 폴더에서든 자신의 clone 경로로 실행할 수 있습니다.
 
@@ -22,7 +24,7 @@ macOS·Linux에서 `python` 명령이 없다면 `python3`, Windows에서는 `py 
 python /path/to/adaptive-aac/run.py
 ```
 
-`run.py`는 활성 모델에 맞는 `.venv-mlx` 또는 `.venv-torch` 가상환경을 자동으로 사용합니다. 기본 기능에는 모델 설치가 필요하지 않습니다.
+`run.py`는 활성 모델에 맞는 `.venv-mlx` 또는 `.venv-torch` 가상환경을 자동으로 사용하고, 없으면 `.venv`를 사용합니다. 모델 가상환경에도 서버 패키지가 함께 설치됩니다. 기본 기능에는 모델 설치가 필요하지 않습니다.
 
 1. `먹고 싶어요` → `빵`을 고릅니다.
 2. **문장으로 만들기**를 눌러 `빵을 먹고 싶어요.`를 확인합니다.
@@ -116,15 +118,15 @@ LLM에 보내는 데이터는 현재 선택한 그림, 사용자가 고른 상�
 
 ## 테스트와 평가
 
-추가 패키지 없이 핵심 테스트 실행:
+`requirements-dev.txt`를 설치한 `.venv`에서 핵심 테스트 실행:
 
 ```bash
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 python3 -m scripts.evaluate --output artifacts/evaluation.json
 python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synthetic-training.jsonl
 ```
 
-테스트는 추천 범위·개인화·재추천·부정 표현·잘못된 모델 응답·SQLite 저장·프로필 분리·중복 저장 방지·HTTP 입력 검증·외부 Origin 차단을 확인합니다. 실제 HTTP 처리기를 메모리 스트림으로 실행하므로 테스트에 포트가 필요하지 않습니다. `pytest`를 선호하면 `requirements-dev.txt`로 설치한 뒤 동일 테스트를 실행할 수 있습니다.
+테스트는 추천 범위·개인화·재추천·부정 표현·잘못된 모델 응답·SQLite 저장·프로필 분리·중복 저장 방지·HTTP 입력 검증·외부 Origin 차단을 확인합니다. FastAPI `TestClient`로 실제 앱을 메모리에서 실행하므로 테스트에 포트가 필요하지 않습니다. `pytest`를 선호하면 `requirements-dev.txt`로 설치한 뒤 동일 테스트를 실행할 수 있습니다.
 
 선택적 화면 테스트는 Node 20+와 설치된 Chromium이 필요합니다. 런타임 앱은 Node를 사용하지 않습니다.
 
@@ -132,7 +134,7 @@ python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synth
 CHROMIUM_PATH=/absolute/path/to/chromium node scripts/browser-test.mjs
 ```
 
-브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 검색, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다. 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
+브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 검색, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다(예: `PYTHON=.venv/bin/python`). 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
 
 `data/scenarios.json`은 손으로 만든 **개발용 합성 데이터 16건**입니다. 평가 수치는 6개 그림 단위 탐색의 시뮬레이션이며 실제 사용자의 성능 향상을 의미하지 않습니다. 사용자 평가 설계와 계산 가정은 [평가·학습 안내](docs/evaluation.md)를 확인하세요.
 

@@ -8,6 +8,10 @@ import sqlite3
 import uuid
 
 
+class ProfileNotFound(LookupError):
+    pass
+
+
 class Store:
     def __init__(self, path):
         self.path = str(path)
@@ -49,7 +53,7 @@ class Store:
         with self.connect() as db:
             row = db.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
         if not row:
-            raise LookupError("사용자 정보를 찾을 수 없어요. 페이지를 새로 열어 주세요.")
+            raise ProfileNotFound("사용자 정보를 찾을 수 없어요. 페이지를 새로 열어 주세요.")
         return dict(row, cloud_enabled=bool(row["cloud_enabled"]))
 
     def update_profile(self, profile_id, name, cloud_enabled):

@@ -1,8 +1,9 @@
 # Adaptive AAC
 
-Local research prototype based on the linked capstone proposal. Python 3.11+ standard-library backend, SQLite, and browser-native HTML/CSS/JavaScript. No runtime packages or Node build are required.
+Local research prototype based on the linked capstone proposal. Python 3.11+ FastAPI backend (`aac/api.py` HTTP layer, `aac/service.py` domain service), SQLite, and browser-native HTML/CSS/JavaScript. Runtime packages are listed in `requirements.txt`; no Node build is required.
 
-- Run from the clone: `python run.py` (or an absolute path to `run.py`); tests: `python -m unittest discover -s tests -v`; evaluation: `python -m scripts.evaluate`.
+- Install `requirements-dev.txt` into `.venv`, then run from the clone: `python run.py` (or an absolute path to `run.py`); tests: `.venv/bin/python -m unittest discover -s tests -v`; evaluation: `python -m scripts.evaluate`. API docs are at `/docs`.
+- Keep routes thin: HTTP concerns in `aac/api.py`, domain validation in `aac/service.py`. Keep error responses as `{"error": "..."}` with Korean messages, and keep access logs off.
 - Optional local Qwen: `python setup_local.py --serve` selects MLX on Apple Silicon and Transformers elsewhere. CUDA uses QLoRA; CPU uses LoRA. Intel Mac needs Python 3.11/3.12. Keep dependencies in `.venv-mlx/` or `.venv-torch/` and model/data/weights in ignored `var/`. Never report training complete without actual saved adapter weights and successful generation validation.
 - Keep subprocess communication portable to Windows (no `select()` on pipes), use UTF-8 for text artifacts, and preserve existing MLX manifests. Run `AAC_TEST_TORCH=1` with the PyTorch environment for the optional tiny-model integration test; CI runs it on each supported OS.
 - Keep all vocabulary IDs stable. Validate all model output against the vocabulary and use deterministic fallback on every provider error.

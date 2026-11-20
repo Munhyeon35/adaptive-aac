@@ -14,6 +14,8 @@ if __name__ == "__main__":
         venv = environment_dir(active_backend())
     except (ValueError, KeyError) as error:
         raise SystemExit(f"Local model configuration error: {error}") from None
+    if not environment_python(venv).exists():
+        venv = ROOT / ".venv"  # Server-only environment from requirements.txt.
     interpreter = environment_python(venv)
     if interpreter.exists() and Path(sys.prefix).resolve() != venv.resolve():
         os.execv(str(interpreter), [str(interpreter), str(Path(__file__).resolve()), *sys.argv[1:]])
