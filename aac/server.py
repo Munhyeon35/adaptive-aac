@@ -192,6 +192,8 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(Application(Store(path), provider, local_provider)))
     except OSError as error:
         raise SystemExit(f"Cannot open localhost:{port}: {error}. Check local server permissions or set AAC_PORT to another port.") from None
+    if local_provider:
+        local_provider.preload()  # Cold start happens now, not on the user's first selection.
     print(f"Adaptive AAC: http://localhost:{server.server_port}", flush=True)
     print("Press Ctrl+C to stop. Cloud recommendations require opt-in in Settings.", flush=True)
     try:

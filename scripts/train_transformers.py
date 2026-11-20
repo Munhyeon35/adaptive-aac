@@ -10,25 +10,32 @@ import subprocess
 import sys
 
 from aac.config import ROOT
-from aac.torch_model import MODEL_REPO, encode_example, generate_text, load_model, resolve_device
+from aac.torch_model import MODEL_REPO, SUPPORTED_MODELS, encode_example, generate_text, load_model, resolve_device
 from scripts.train_local import measure
 
 
-def train_adapter(model, tokenizer, train_rows, valid_rows, adapter, iters, quantization, log):
+LORA_TARGETS = {"attention": ["q_proj", "v_proj"],
+                "all": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]}
+
+
+def train_adapter(model, tokenizer, train_rows, valid_rows, adapter, iters, quantization, log,
+                  rank=8, layers=4, targets="attention", learning_rate=0.0001):
     import torch
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     if quantization == "4bit":
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True,
                                                gradient_checkpointing_kwargs={"use_reentrant": False})
-    config = LoraConfig(task_type="CAUSAL_LM", r=8, lora_alpha=16, lora_dropout=0.0, bias="none",
-                        target_modules=["q_proj", "v_proj"],
-                        layers_to_transform=list(range(max(0, model.config.num_hidden_layers - 4), model.config.num_hidden_layers)))
+    total = model.config.num_hidden_layers
+    # layers=0 adapts every layer; the default (last 4, q/v, r=8) reproduces earlier runs.
+    config = LoraConfig(task_type="CAUSAL_LM", r=rank, lora_alpha=2 * rank, lora_dropout=0.0, bias="none",
+                        target_modules=LORA_TARGETS[targets],
+                        layers_to_transform=list(range(max(0, total - layers) if layers else 0, total)))
     model = get_peft_model(model, config)
     model.config.use_cache = False
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     train_data = [encode_example(tokenizer, row) for row in train_rows]
     valid_data = [encode_example(tokenizer, row) for row in valid_rows]
-    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=0.0001)
+    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=learning_rate)
     order = list(range(len(train_data)))
     rng = random.Random(42)
 
@@ -69,12 +76,21 @@ def main():
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--training", choices=("auto", "lora", "qlora"), default="auto")
     parser.add_argument("--no-activate", action="store_true")
+    parser.add_argument("--model-repo", choices=SUPPORTED_MODELS, default=MODEL_REPO)
+    parser.add_argument("--lora-rank", type=int, choices=(4, 8, 16, 32), default=8)
+    parser.add_argument("--lora-layers", type=int, default=4, help="Adapt the last N layers; 0 adapts all")
+    parser.add_argument("--lora-targets", choices=tuple(LORA_TARGETS), default="attention")
+    parser.add_argument("--learning-rate", type=float, default=0.0001)
     args = parser.parse_args()
     if not 1 <= args.iters <= 10000:
         parser.error("--iters must be between 1 and 10000")
+    if not 0 <= args.lora_layers <= 128 or not 1e-6 <= args.learning_rate <= 1e-2:
+        parser.error("--lora-layers must be 0-128 and --learning-rate 1e-6..1e-2")
     run_dir = args.run_dir.resolve()
     state = {"backend": "transformers", "stage": "import_dependencies", "state": "running",
-             "training_completed": False, "model_repo": MODEL_REPO, "iterations": args.iters}
+             "training_completed": False, "model_repo": args.model_repo, "iterations": args.iters,
+             "lora": {"rank": args.lora_rank, "layers": args.lora_layers or "all", "targets": args.lora_targets,
+                      "learning_rate": args.learning_rate}}
 
     def write(name, value):
         (run_dir / name).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -96,9 +112,9 @@ def main():
             import bitsandbytes  # noqa: F401 — fail before downloading if optional dependency is absent
         status(stage="download", device=device, quantization=quantization,
                training_method="qlora" if quantization == "4bit" else "lora")
-        revision = HfApi().model_info(MODEL_REPO).sha
-        print(f"Downloading {MODEL_REPO} for {device}…", flush=True)
-        path = Path(snapshot_download(MODEL_REPO, revision=revision, cache_dir=ROOT / "var/huggingface/hub",
+        revision = HfApi().model_info(args.model_repo).sha
+        print(f"Downloading {args.model_repo} for {device}…", flush=True)
+        path = Path(snapshot_download(args.model_repo, revision=revision, cache_dir=ROOT / "var/huggingface/hub",
                                       allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja", "LICENSE*", "*.md"]))
         status(stage="baseline", model_revision=revision, model_path=str(path))
         frozen = subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True)
@@ -115,7 +131,8 @@ def main():
         status(stage="training")
         print(f"Training {args.iters} {state['training_method']} iterations on {device}. Log: {run_dir / 'training.log'}", flush=True)
         with (run_dir / "training.log").open("w", encoding="utf-8") as log:
-            train_adapter(model, tokenizer, datasets["train"], datasets["valid"], adapter, args.iters, quantization, log)
+            train_adapter(model, tokenizer, datasets["train"], datasets["valid"], adapter, args.iters, quantization, log,
+                          args.lora_rank, args.lora_layers, args.lora_targets, args.learning_rate)
         weights = adapter / "adapter_model.safetensors"
         if not weights.is_file() or not weights.stat().st_size:
             raise RuntimeError("Training exited without adapter weights")
@@ -129,9 +146,9 @@ def main():
         write("after.json", after)
         if after["valid_output_rate"] == 0:
             raise RuntimeError("Saved adapter produced no valid recommendations; active model unchanged. Inspect after.json.")
-        active = {"backend": "transformers", "model_repo": MODEL_REPO, "model_revision": revision,
+        active = {"backend": "transformers", "model_repo": args.model_repo, "model_revision": revision,
                   "model_path": str(path), "adapter_path": str(adapter), "quantization": quantization,
-                  "trained_at": datetime.now(timezone.utc).isoformat(), "run_dir": str(run_dir)}
+                  "trained_at": datetime.now(timezone.utc).isoformat(), "run_dir": str(run_dir), "lora": state["lora"]}
         write("model.json", active)
         if not args.no_activate:
             temporary = ROOT / "var/active-model.json.tmp"

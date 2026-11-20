@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from aac.local_model import LocalMLXProvider, configured_local_provider, local_messages, parse_ids
+from aac.local_model import (LOCAL_INSTRUCTIONS, LocalMLXProvider, configured_local_provider, local_messages,
+                              output_token_budget, parse_ids)
 from aac.prediction import recommend
 from aac.sentences import generate_sentence
 from aac.server import Application
@@ -92,6 +93,14 @@ class LocalModelTests(unittest.TestCase):
         messages = local_messages(["eat"], [{"symbols": ["eat", "rice"], "sentence": "PRIVATE", "name": "PRIVATE"}], ["bread"], "meal")
         self.assertNotIn("PRIVATE", json.dumps(messages))
 
+    def test_prompt_limit_matches_request_and_trained_text_is_stable(self):
+        self.assertIn("Choose 1 to 6 unique IDs", LOCAL_INSTRUCTIONS)
+        self.assertEqual(local_messages([], [], ["eat"], "any")[0]["content"], LOCAL_INSTRUCTIONS)
+        self.assertIn("Choose 1 to 16 unique IDs", local_messages([], [], ["eat"], "any", 16)[0]["content"])
+        self.assertEqual(output_token_budget(6), 96)
+        self.assertGreater(output_token_budget(16), 96)
+        self.assertLessEqual(output_token_budget(1000), 256)
+
 
 class TrainingDataTests(unittest.TestCase):
     def test_split_is_reproducible_valid_and_has_no_shared_prompts(self):
@@ -113,6 +122,7 @@ class TrainingDataTests(unittest.TestCase):
                     payload = json.loads(row["messages"][1]["content"])
                     ids = parse_ids(row["messages"][-1]["content"], payload["allowed"])
                     self.assertFalse(set(ids) & set(payload["selected"]))
+                    self.assertLess(len(row["messages"][1]["content"]), 4000)
 
     def test_no_fake_evaluation_gain_from_rule_fallback(self):
         class Tokenizer:

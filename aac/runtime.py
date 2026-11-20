@@ -7,6 +7,11 @@ import platform
 
 from .config import ROOT
 
+# Passed to every chat-template render (serving, training masks, evaluation). Qwen3/EXAONE 4
+# otherwise open a reasoning block that wastes the output budget and breaks JSON parsing;
+# templates without the variable (Qwen2.5) render byte-identically.
+CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+
 
 def select_backend(requested="auto", system=None, machine=None):
     system = system or platform.system()

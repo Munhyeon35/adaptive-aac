@@ -4,11 +4,12 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from aac.local_model import LocalModelProvider, configured_local_provider
-from aac.runtime import select_backend, environment_python, active_backend
+from aac.runtime import CHAT_TEMPLATE_KWARGS, select_backend, environment_python, active_backend
 from aac.torch_model import encode_example
 from aac.prediction import recommend
 from aac.server import Application
@@ -44,11 +45,17 @@ class RuntimeTests(unittest.TestCase):
                     self.assertEqual(active_backend(), "mlx")
 
     def test_prompt_masking_keeps_only_completion_and_rejects_truncation(self):
+        renders = []
+
         class Tokenizer:
-            def apply_chat_template(self, _messages, tokenize, add_generation_prompt):
+            def apply_chat_template(self, _messages, tokenize, add_generation_prompt, **kwargs):
+                renders.append(kwargs)
                 return [1, 2] if add_generation_prompt else [1, 2, 3, 4]
         row = {"messages": [{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}]}
         self.assertEqual(encode_example(Tokenizer(), row), ([1, 2, 3, 4], [-100, -100, 3, 4]))
+        # Training masks must render with the same template switches as the serving workers.
+        self.assertEqual(renders, [CHAT_TEMPLATE_KWARGS, CHAT_TEMPLATE_KWARGS])
+        self.assertEqual(CHAT_TEMPLATE_KWARGS, {"enable_thinking": False})
         with patch.object(Tokenizer, "apply_chat_template", return_value=list(range(2049))):
             with self.assertRaises(ValueError):
                 encode_example(Tokenizer(), row)
@@ -66,7 +73,9 @@ class WorkerPipeTests(unittest.TestCase):
         self.addCleanup(self.provider.close)
         self.popen = subprocess.Popen
 
-    def spawn(self, code):
+    def spawn(self, code, ready=True):
+        # Real workers announce a loaded model before serving requests.
+        code = ("print('{\"ready\":true}',flush=True)\n" if ready else "") + code
         def replacement(_command, **kwargs):
             return self.popen([sys.executable, "-u", "-c", code], **kwargs)
         return patch("aac.local_model.subprocess.Popen", side_effect=replacement)
@@ -74,8 +83,10 @@ class WorkerPipeTests(unittest.TestCase):
     def test_persistent_pipe_unicode_and_restart(self):
         code = '''import sys,json
 for line in sys.stdin:
-    messages=json.loads(line)["messages"]
+    request=json.loads(line)
+    messages=request["messages"]
     assert "먹고 싶어요" in json.dumps(messages,ensure_ascii=False)
+    assert request["max_tokens"] == (176 if "Choose 1 to 16" in messages[0]["content"] else 96)
     print(json.dumps({"text": '{"ids":["bread"]}'}),flush=True)
 '''
         with self.spawn(code):
@@ -91,10 +102,43 @@ for line in sys.stdin:
 
     def test_eof_and_oversized_output_use_fallback(self):
         for code in ("pass", "print('x'*17000,flush=True)"):
-            with self.subTest(code=code), self.spawn(code):
+            with self.subTest(code=code), self.spawn(code, ready=False):
                 self.provider._retry_at = 0
                 self.assertEqual(recommend([], provider=self.provider)["source"], "fallback")
                 self.assertIsNone(self.provider._process)
+
+    def test_generation_error_keeps_loaded_worker_without_cooldown(self):
+        code = '''import sys,json
+for number, line in enumerate(sys.stdin):
+    print('{"error":"generation_failed"}' if number == 0 else json.dumps({"text": '{"ids":["bread"]}'}), flush=True)
+'''
+        with self.spawn(code):
+            self.assertEqual(recommend([], provider=self.provider)["source"], "fallback")
+            pid = self.provider._process.pid
+            self.assertEqual(recommend([], provider=self.provider)["source"], "local_llm")
+            self.assertEqual(self.provider._process.pid, pid)
+
+    def test_load_failure_and_slow_load_use_separate_budget(self):
+        with self.spawn("print('{\"error\":\"model_load_failed\"}',flush=True)", ready=False):
+            self.assertEqual(recommend([], provider=self.provider)["source"], "fallback")
+            self.assertIsNone(self.provider._process)
+        self.provider._retry_at = 0
+        self.provider.timeout, self.provider.load_timeout = 0.2, 5
+        code = "import time,sys,json\ntime.sleep(1)\nprint('{\"ready\":true}',flush=True)\nfor line in sys.stdin:\n    print(json.dumps({'text': '{\"ids\":[\"bread\"]}'}),flush=True)\n"
+        with self.spawn(code, ready=False):
+            # Loading for 1 s exceeds the 0.2 s generation budget but not the load budget.
+            self.assertEqual(recommend([], provider=self.provider)["source"], "local_llm")
+
+    def test_preload_starts_worker_before_first_request(self):
+        with self.spawn("import sys\nfor line in sys.stdin: pass"):
+            self.provider.preload()
+            deadline = time.monotonic() + 5
+            while self.provider._process is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            while self.provider._lock.locked() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertIsNotNone(self.provider._process)
+            self.assertIsNone(self.provider._process.poll())
 
     def test_blocked_worker_is_terminated_after_timeout(self):
         self.provider.timeout = 0.1

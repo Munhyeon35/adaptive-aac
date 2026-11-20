@@ -5,6 +5,8 @@ from contextlib import redirect_stdout
 import json
 import sys
 
+from .runtime import CHAT_TEMPLATE_KWARGS
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -18,16 +20,23 @@ def main():
         with redirect_stdout(sys.stderr):
             from .torch_model import load_model, generate_text
             model, tokenizer = load_model(args.model, args.adapter, args.device, args.quantization)
+        print('{"ready":true}', file=output, flush=True)
         for line in sys.stdin:
             try:
-                messages = json.loads(line)["messages"]
+                request = json.loads(line)
+                messages = request["messages"]
+                max_tokens = max(16, min(256, int(request.get("max_tokens", 96))))
                 with redirect_stdout(sys.stderr):
-                    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    text = generate_text(model, tokenizer, prompt)
+                    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
+                                                           **CHAT_TEMPLATE_KWARGS)
+                    text = generate_text(model, tokenizer, prompt, max_tokens=max_tokens)
                 print(json.dumps({"text": text}, ensure_ascii=False), file=output, flush=True)
-            except Exception:
+            except Exception as error:
+                # Class name only: exception text could echo request content.
+                print(f"generation_failed: {type(error).__name__}", file=sys.stderr, flush=True)
                 print('{"error":"generation_failed"}', file=output, flush=True)
-    except Exception:
+    except Exception as error:
+        print(f"model_load_failed: {type(error).__name__}", file=sys.stderr, flush=True)
         print('{"error":"model_load_failed"}', file=output, flush=True)
 
 

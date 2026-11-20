@@ -7,7 +7,8 @@ from pathlib import Path
 import random
 
 from aac.local_model import local_messages
-from aac.vocabulary import BY_ID, validate_ids
+from aac.prediction import model_candidates
+from aac.vocabulary import validate_ids
 
 
 def build_examples(records):
@@ -18,16 +19,17 @@ def build_examples(records):
         if context not in ("any", "home", "school", "meal"):
             raise ValueError("Invalid context")
         for index, next_id in enumerate(sequence):
-            selected = sequence[:index]
-            messages = local_messages(selected, [], [i for i in BY_ID if i not in selected], context)
-            key = json.dumps(messages, ensure_ascii=False, sort_keys=True)
-            if key not in grouped:
-                grouped[key] = {"messages": messages, "targets": []}
-            if next_id not in grouped[key]["targets"]:
-                grouped[key]["targets"].append(next_id)
-    for entry in grouped.values():
+            targets = grouped.setdefault((tuple(sequence[:index]), context), [])
+            if next_id not in targets:
+                targets.append(next_id)
+    for (selected, context), targets in grouped.items():
+        # Same bounded allowed list as serving. Targets are always included so reviewed
+        # Mulberry choices remain learnable; local_messages sorts IDs, so no position leak.
+        targets = targets[:6]
+        allowed = model_candidates(list(selected), context=context, required=targets)
+        messages = local_messages(list(selected), [], allowed, context)
         # A partial intention can have several correct next choices.
-        yield {"messages": entry["messages"] + [{"role": "assistant", "content": json.dumps({"ids": entry["targets"][:6]})}]}
+        yield {"messages": messages + [{"role": "assistant", "content": json.dumps({"ids": targets})}]}
 
 
 def prompt_key(example):
