@@ -74,7 +74,10 @@ class AacService:
         if category is not None and (not isinstance(category, str) or category not in CATEGORY_IDS):
             raise ValueError("분류를 확인해 주세요.")
         excluded = validate_ids(list(excluded), maximum=len(VOCABULARY))
-        return recommend(selected, self.store.history(profile_id), category, context, excluded, provider=provider)
+        # The first board shows more starters; after a selection a short list keeps choices quick.
+        limit = 6 if selected else 16
+        return recommend(selected, self.store.history(profile_id), category, context, excluded,
+                         limit=limit, provider=provider)
 
     def sentence(self, profile_id, selected, context="any"):
         provider = self._provider(profile_id)

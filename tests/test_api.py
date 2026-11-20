@@ -101,6 +101,21 @@ class APITests(unittest.TestCase):
             self.assertEqual(headers["cache-control"], "no-store")
             self.assertTrue(content)
 
+    def test_symbol_images_are_served_only_from_the_symbol_folder(self):
+        status, headers, content = self.http(path="/symbols/drink_,_to.svg")
+        self.assertEqual((status, headers["content-type"]), (200, "image/svg+xml"))
+        self.assertIn(b"<svg", content)
+        for path in ("/symbols/missing.svg", "/symbols/..%2F..%2F.env", "/symbols/%2e%2e%2fapp.js",
+                     "/symbols/favicon.js"):
+            with self.subTest(path=path):
+                self.assertEqual(self.http(path=path)[0], 404)
+
+    def test_first_board_shows_more_starters_than_follow_ups(self):
+        first = self.service.recommend(self.profile["id"])
+        self.assertEqual(len(first["symbols"]), 16)
+        following = self.service.recommend(self.profile["id"], [first["symbols"][0]["id"]])
+        self.assertLessEqual(len(following["symbols"]), 6)
+
     def test_api_docs_are_served_with_their_own_policy(self):
         status, headers, _ = self.http(path="/docs")
         self.assertEqual(status, 200)

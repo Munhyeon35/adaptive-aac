@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 import logging
+import re
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, Request
@@ -26,6 +27,9 @@ NOT_FOUND = "요청한 주소를 찾을 수 없어요."
 SERVER_ERROR = "저장 또는 연결에 문제가 있어요. 잠시 후 다시 시도해 주세요."
 STATIC_ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
                  "/style.css": ("style.css", "text/css"), "/favicon.svg": ("favicon.svg", "image/svg+xml")}
+SYMBOL_DIR = ROOT / "web" / "assets" / "symbols"
+# Strict whitelist: no traversal, encoded separators, or files outside the symbol folder.
+SYMBOL_NAME = re.compile(r"[A-Za-z0-9_,!() .+\-]+\.svg")
 
 
 class ProfileCreate(BaseModel):
@@ -164,6 +168,13 @@ def create_app(service, port=8765, allowed_hosts=(), allowed_origins=()):
     def confirm(body: ConfirmRequest, pid: str = Depends(profile_id)):
         return service.confirm(pid, body.id, body.selected, body.sentence, body.mode, body.context,
                                body.selection_count, body.elapsed_ms)
+
+    @app.get("/symbols/{name}", include_in_schema=False)
+    def symbol(name: str):
+        path = SYMBOL_DIR / name
+        if not SYMBOL_NAME.fullmatch(name) or not path.is_file():
+            raise StarletteHTTPException(404)
+        return FileResponse(path, media_type="image/svg+xml")
 
     for path, (filename, mime) in STATIC_ASSETS.items():
         app.add_api_route(path, _asset(filename, mime), methods=["GET"], include_in_schema=False)
