@@ -1,0 +1,23 @@
+# Demo deployment behind a host reverse proxy. Values come from .env next to this file.
+services:
+  aac:
+    build: .
+    image: adaptive-aac:latest
+    container_name: adaptive-aac
+    restart: unless-stopped
+    ports:
+      # Bound to loopback so only the host nginx can reach it.
+      - "127.0.0.1:${AAC_HOST_PORT:-8765}:8765"
+    environment:
+      AAC_ALLOWED_HOSTS: ${AAC_ALLOWED_HOSTS:-}
+      AAC_ALLOWED_ORIGINS: ${AAC_ALLOWED_ORIGINS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AAC_PUBLIC_URL: ${AAC_PUBLIC_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    volumes:
+      - aac-data:/app/var
+
+volumes:
+  aac-data:

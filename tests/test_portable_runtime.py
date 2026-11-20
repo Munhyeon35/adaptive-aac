@@ -12,7 +12,7 @@ from aac.local_model import LocalModelProvider, configured_local_provider
 from aac.runtime import CHAT_TEMPLATE_KWARGS, select_backend, environment_python, active_backend
 from aac.torch_model import encode_example
 from aac.prediction import recommend
-from aac.server import Application
+from aac.service import AacService
 from aac.storage import Store
 
 
@@ -37,8 +37,8 @@ class RuntimeTests(unittest.TestCase):
                 provider = configured_local_provider()
                 self.addCleanup(provider.close)
                 self.assertEqual(provider.backend, "transformers")
-                app = Application(Store(root / "test.sqlite3"), local_provider=provider)
-                self.assertEqual(app.handle("GET", "/api/bootstrap", {}, "")["recommendation_timeout_ms"], 125000)
+                app = AacService(Store(root / "test.sqlite3"), local_provider=provider)
+                self.assertEqual(app.bootstrap()["recommendation_timeout_ms"], 125000)
                 del manifest["backend"]
                 (root / "var/active-model.json").write_text(json.dumps(manifest), encoding="utf-8")
                 with patch("aac.runtime.platform.system", return_value="Darwin"), patch("aac.runtime.platform.machine", return_value="arm64"):

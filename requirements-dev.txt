@@ -1,2 +1,4 @@
-# Optional; the standard-library unittest runner needs no packages.
+# Tests: FastAPI TestClient needs httpx. The unittest runner needs nothing else.
+-r requirements.txt
+httpx>=0.28,<1
 pytest>=8,<10
