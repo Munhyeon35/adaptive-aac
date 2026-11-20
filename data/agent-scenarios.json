@@ -1,64 +1,44 @@
 {
-  "kind": "synthetic-aac-browser-scenarios",
-  "sources": {
-    "visual_search": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9132148/",
-    "motor_recovery": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6101246/",
-    "developmental_delay": "https://pubmed.ncbi.nlm.nih.gov/20360461/",
-    "communication_functions": "https://pubmed.ncbi.nlm.nih.gov/24839882/"
+  "kind": "synthetic-aac-user-cases-with-published-behavioral-evidence",
+  "evidence": {
+    "touch": {
+      "reference": "Bertucco and Sanger (2018), task 1 methods and Table II",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC6101246/",
+      "observed": "Ten children with dyskinetic cerebral palsy performed touchscreen target-selection tasks. The study distinguished taps on the intended target, taps on another target, and misses, and measured reaction and movement time. Target size, spacing, density and cues influenced performance; estimated layouts varied between children.",
+      "limits": "This was a target-selection study; the paper does not establish a universal error probability or reproduce an individual's AAC interaction history."
+    },
+    "conversation": {
+      "reference": "Pinto and Gardner (2014), naturalistic iPad-supported interactions",
+      "url": "https://doi.org/10.1177/0265659013518338",
+      "observed": "The study analyzed everyday interactions involving a nonspeaking child with a severe physical disability and a parent. The iPad was used together with other ways of communicating, and the parent's participation shaped when and how it was used.",
+      "limits": "This is naturalistic evidence about actual AAC use. This benchmark models solo card-based access, so assistance and non-device communication are outside the interaction."
+    },
+    "visual_search": {
+      "reference": "Wilkinson, Gilmore and Qian (2022), eye-tracking results",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9132148/",
+      "observed": "Ten adolescents and adults with Down syndrome searched symbol displays. Arrangements reducing visual crowding and visibly grouping categories reduced fixations on irrelevant symbols and gaze shifts away after finding the target.",
+      "limits": "This is separate evidence for visual-search behavior, not a prediction of how a person with cerebral palsy will search."
+    }
   },
   "personas": [
-    {"id": "visual_search", "inspect_ms_per_card": 380, "action_ms": 420, "mis_tap_probability": 0, "budget_ms": 65000},
-    {"id": "motor_recovery", "inspect_ms_per_card": 220, "action_ms": 750, "mis_tap_probability": 0.25, "budget_ms": 65000}
+    {
+      "id": "direct_touch_motor",
+      "description": "A fictional person who communicates using pictogram AAC and has variable accuracy using direct touch. Can interpret everyday Korean labels and make their own communication decisions. Assess controls by visible size, spacing and competing neighbors. Touch can sometimes land on a neighboring control or require re-aiming, especially in crowded layouts. Decide from each screen whether it is plausible that this select or scroll would be accurate or go astray. If the visible result differs from what you meant, decide whether and how to repair it. Avoid arbitrary mistakes on large isolated controls. Choose a practical effort level and decide whether a partial message is worth delivering.",
+      "evidence_ids": ["touch", "conversation"]
+    },
+    {
+      "id": "direct_touch_visual_search",
+      "description": "A fictional pictogram AAC user who uses direct touch, can interpret familiar Korean labels, and has difficulty distinguishing similar symbols in visually crowded areas. Use meaningful grouping or distinctive pictograms when they actually help on this screen. Notice some irrelevant or similar symbols while looking. Decide from the onscreen result when to inspect more, try a different visible route, repair a choice, deliver a partial message, or stop. Do not assume a fixed visual scanning order.",
+      "evidence_ids": ["visual_search"]
+    }
   ],
   "tasks": [
-    {
-      "id": "food_request",
-      "context": "meal",
-      "intent": "빵을 먹고 싶어요.",
-      "goal_cards": ["먹고 싶어요", "빵"],
-      "score_phrases": {"5": ["빵을 먹고 싶어요", "빵 먹고 싶어요"], "4": ["빵을 주세요", "빵 주세요"], "3": ["먹고 싶어요", "빵"]}
-    },
-    {
-      "id": "more_water",
-      "context": "home",
-      "intent": "물을 더 마시고 싶어요.",
-      "goal_cards": ["마시고 싶어요", "물", "더"],
-      "score_phrases": {"5": ["물을 더 마시고 싶어요", "물을 더 주세요"], "4": ["물을 마시고 싶어요", "물 주세요"], "3": ["마시고 싶어요", "물"]}
-    },
-    {
-      "id": "pain_location",
-      "context": "any",
-      "intent": "머리가 아파요.",
-      "goal_cards": ["아파요", "머리"],
-      "score_phrases": {"5": ["머리가 아파요", "머리 아파요"], "3": ["아파요", "머리"]}
-    },
-    {
-      "id": "refusal",
-      "context": "meal",
-      "intent": "빵을 먹고 싶지 않아요.",
-      "goal_cards": ["먹고 싶어요", "빵", "싫어요 / 안 할래요"],
-      "score_phrases": {"5": ["빵을 먹고 싶지 않아요", "빵을 안 먹을래요", "빵은 싫어요"], "3": ["먹고 싶지 않아요", "싫어요 / 안 할래요"]}
-    },
-    {
-      "id": "thanks",
-      "context": "school",
-      "intent": "고마워요.",
-      "goal_cards": ["고마워요"],
-      "score_phrases": {"5": ["고마워요", "감사해요", "감사합니다"]}
-    },
-    {
-      "id": "fan_request",
-      "context": "home",
-      "intent": "선풍기를 주세요.",
-      "goal_cards": ["주세요", "선풍기"],
-      "score_phrases": {"5": ["선풍기를 주세요", "선풍기 주세요"], "4": ["선풍기"], "3": ["주세요"]}
-    },
-    {
-      "id": "temperature_detail",
-      "context": "home",
-      "intent": "미지근한 물을 마시고 싶어요.",
-      "goal_cards": ["마시고 싶어요", "물", "미지근한"],
-      "score_phrases": {"5": ["미지근한 물을 마시고 싶어요", "미지근한 물을 주세요"], "3": ["물을 마시고 싶어요", "마시고 싶어요", "물"]}
-    }
+    {"id": "food_request", "context": "meal", "intent": "빵을 먹고 싶어요."},
+    {"id": "more_water", "context": "home", "intent": "물을 더 마시고 싶어요."},
+    {"id": "pain_location", "context": "any", "intent": "머리가 아파요."},
+    {"id": "refusal", "context": "meal", "intent": "빵을 먹고 싶지 않아요."},
+    {"id": "thanks", "context": "school", "intent": "고마워요."},
+    {"id": "fan_request", "context": "home", "intent": "선풍기를 주세요."},
+    {"id": "temperature_detail", "context": "home", "intent": "미지근한 물을 마시고 싶어요."}
   ]
 }

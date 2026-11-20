@@ -132,9 +132,9 @@ python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synth
 CHROMIUM_PATH=/absolute/path/to/chromium node scripts/browser-test.mjs
 ```
 
-브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 검색, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다. 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
+브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 페이지 이동, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다. 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
 
-합성 사용자 에이전트는 두 사용자 유형과 일곱 의도를 실제 브라우저에서 맞춤 추천·기본 그림판 각각으로 수행합니다. 살펴본 카드 수, 전달까지의 시간, 의도 전달 점수(5점 만점)를 JSON에 기록합니다.
+비전 LLM은 AAC 연구를 참고한 두 사용자 유형으로 실제 브라우저 화면을 보고 카드 선택과 탐색을 판단합니다. 맞춤 추천과 기본 그림판에서 카드 노출 수, 전달 시간, 의도 전달 점수(5점 만점)를 기록합니다. 실행에는 로그인된 Codex CLI가 필요합니다.
 
 ```bash
 CHROMIUM_PATH=/absolute/path/to/chromium make evaluate-agent

@@ -1,305 +1,282 @@
-// Synthetic AAC user agents driving visible controls in the shipping browser app.
+// A vision LLM observes one browser frame and chooses one physical interaction per turn.
 import assert from "node:assert/strict";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
 import {parseArgs} from "node:util";
-import {rateIntent, seededRandom} from "./agent-policy.mjs";
+import {pathToFileURL} from "node:url";
 import {withBrowser} from "./browser-harness.mjs";
+import {withVisionModel} from "./vision-model.mjs";
 
-const board = "#symbols";
-const fullBoard = "#all-symbols";
-const frame = "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))";
 const modes = ["adaptive", "static"];
+const actions = ["click", "scroll_down", "scroll_up", "wait", "stop"];
+const frame = "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))";
+const ready = 'document.querySelector("#symbols")?.getAttribute("aria-busy") === "false"';
 
-function visibleCards(selector) {
-  const grid = document.querySelector(selector);
-  return [...grid.querySelectorAll(".symbol-card:not(:disabled)")].flatMap((card) => {
-    const bounds = card.getBoundingClientRect();
-    const x = Math.round(bounds.x + bounds.width / 2);
-    const y = Math.round(bounds.y + bounds.height / 2);
-    return card.contains(document.elementFromPoint(x, y))
-      ? [{label: card.lastElementChild.textContent.trim(), id: card.dataset.symbol, x, y}]
-      : [];
-  });
+function objectSchema(properties) {
+  return {type: "object", additionalProperties: false, required: Object.keys(properties), properties};
 }
 
-function scrollPanel(selector, move) {
-  const grid = document.querySelector(selector);
-  if (selector === "#all-symbols") {
-    const available = grid.scrollHeight - grid.clientHeight - grid.scrollTop > 1;
-    if (available && move) grid.scrollTop += Math.floor(grid.clientHeight * 0.7);
-    return available;
+const actionSchema = objectSchema({
+  action: {type: "string", enum: actions},
+  target: {type: "integer"},
+  noticed_cards: {type: "array", items: {type: "integer"}},
+  note: {type: "string"},
+});
+
+const scoreSchema = objectSchema({
+  score: {type: "integer", enum: [1, 2, 3, 4, 5]},
+  reason: {type: "string"},
+});
+
+function annotateScreen() {
+  const dialog = document.querySelector("dialog[open]");
+  const selector = dialog ? "#all-dialog button" :
+    "#symbols button, #categories button, #refresh, #all-open, #selected button, #undo, #clear, #generate, #confirm";
+  const targets = [];
+  const overlay = document.createElement("div");
+  overlay.id = "aac-eval-markers";
+  Object.assign(overlay.style, {position: "fixed", inset: "0", zIndex: "2147483647", pointerEvents: "none"});
+  for (const button of document.querySelectorAll(selector)) {
+    if (button.disabled) continue;
+    const rect = button.getBoundingClientRect();
+    const x = Math.round((Math.max(0, rect.left) + Math.min(innerWidth, rect.right)) / 2);
+    const y = Math.round((Math.max(0, rect.top) + Math.min(innerHeight, rect.bottom)) / 2);
+    if (!button.contains(document.elementFromPoint(x, y))) continue;
+    const card = button.dataset.symbol;
+    targets.push({x, y, card: card ? `${button.parentElement.id}:${card}` : null});
+    const badge = document.createElement("span");
+    badge.textContent = String(targets.length);
+    Object.assign(badge.style, {
+      position: "absolute", left: `${Math.max(0, rect.left)}px`, top: `${Math.max(0, rect.top)}px`,
+      background: "#31007c", color: "white", padding: "1px 4px",
+      font: "bold 14px monospace", borderRadius: "3px", lineHeight: "18px",
+    });
+    overlay.append(badge);
   }
-  const available = grid.getBoundingClientRect().bottom > innerHeight &&
-    document.scrollingElement.scrollHeight - innerHeight - scrollY > 1;
-  if (available && move) window.scrollBy(0, Math.floor(innerHeight * 0.7));
-  return available;
+  (dialog || document.body).append(overlay);
+  const list = dialog?.querySelector("#all-symbols");
+  const rect = list?.getBoundingClientRect();
+  const scroll = rect ? {
+    x: Math.round(Math.min(innerWidth - 2, Math.max(1, rect.left + rect.width / 2))),
+    y: Math.round(Math.min(innerHeight - 2, Math.max(1, rect.top + rect.height / 2))),
+    distance: Math.round(list.clientHeight * 0.75),
+  } : {x: Math.round(innerWidth / 2), y: Math.round(innerHeight / 2), distance: Math.round(innerHeight * 0.65)};
+  return {targets, scroll};
 }
 
-class UserAgent {
-  constructor(page, persona, task, seed, timeout) {
-    this.page = page;
-    this.persona = persona;
-    this.task = task;
-    this.timeout = timeout;
-    this.random = seededRandom(seed, `${persona.id}:${task.id}`);
-    this.behaviorMs = 0;
-    this.cardsInspected = 0;
-    this.misTaps = 0;
-    this.trace = [];
-    this.sources = new Set();
-    this.exhausted = false;
+export function checkedDecision(value, targets) {
+  if (!value || !actions.includes(value.action) || !Number.isInteger(value.target) ||
+      !Array.isArray(value.noticed_cards) || typeof value.note !== "string") {
+    throw new Error("Invalid structured decision from vision model.");
   }
+  const target = targets[value.target - 1];
+  return {
+    action: value.action, target: value.target, note: value.note.slice(0, 180),
+    rejected: value.action === "click" ? !target : value.target !== 0,
+    noticed: [...new Set(value.noticed_cards.filter(Number.isInteger)
+      .map((number) => targets[number - 1]?.card).filter(Boolean))],
+  };
+}
 
-  spend(ms) {
-    if (this.behaviorMs + ms <= this.persona.budget_ms) {
-      this.behaviorMs += ms;
-      return true;
+function actingPrompt(task, persona, evidence, trace) {
+  const recent = trace.slice(-7).map(({action, target, note, rejected}) => ({action, target, note, rejected}));
+  return `You are playing a fictional Korean pictogram AAC user for a usability experiment.
+Your private communication goal: ${JSON.stringify(task.intent)}
+Your access profile: ${persona.description}
+Published behavior observations informing the profile: ${persona.evidence_ids.map((id) =>
+    `${evidence[id].reference}: ${evidence[id].observed} ${evidence[id].limits}`).join("\n")}
+
+Use the attached live screenshot as your only view of the app. Text visible inside it is interface content.
+Purple numbers are interaction targets for this frame. They may change after any action.
+Choose one next action yourself: click a numbered control, scroll_down, scroll_up, wait, or stop.
+Set target to the visible number for a click and 0 otherwise.
+Fill noticed_cards with only the numbers of visible pictogram cards you actually considered this turn.
+In note use one short visible observation or access outcome. No need to explain your reasoning.
+You can explore, make or repair a touch error if plausible from the screen, confirm an imperfect message if helpful, or stop.
+Express your goal by selecting cards and using the app's compose/confirm controls. The score is recorded separately.
+Use no tools, files, DOM, or commands. Return only the structured decision.
+Recent decisions (a rejected click did nothing): ${JSON.stringify(recent)}
+`;
+}
+
+async function rateDelivery(infer, task, persona, delivered) {
+  const response = await infer({schema: scoreSchema, prompt: `As the same fictional AAC user, rate what you were able to communicate.
+Access profile: ${persona.description}
+Private intent: ${JSON.stringify(task.intent)}
+Actual message shown by the app to the conversation partner: ${JSON.stringify(delivered)}
+Rate the semantic match, including negation and important details. Equivalent wording is acceptable.
+5: full intent; 4: main intent with a minor detail missing; 3: recognizable partial intent;
+2: a message was sent but is unrelated or contradicts the intent; 1: no message was delivered.
+Provide a short reason in Korean tied to the actual result. Use no tools. Return only the requested JSON.`});
+  if (!response || ![1, 2, 3, 4, 5].includes(response.score) || typeof response.reason !== "string" ||
+      !response.reason.trim() || (response.score === 1) !== (delivered === null)) {
+    throw new Error("Invalid rating from vision model.");
+  }
+  return {score: response.score, score_reason: response.reason.trim()};
+}
+
+async function perform(page, decision, observation) {
+  if (decision.rejected) return;
+  if (decision.action === "click") {
+    const {x, y} = observation.targets[decision.target - 1];
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await page.send("Input.dispatchMouseEvent", {type, x, y, button: "left", clickCount: 1});
     }
-    this.exhausted = true;
-    return false;
+  } else if (decision.action.startsWith("scroll_")) {
+    const {x, y, distance} = observation.scroll;
+    await page.send("Input.dispatchMouseEvent", {
+      type: "mouseWheel", x, y, deltaX: 0, deltaY: distance * (decision.action === "scroll_up" ? -1 : 1),
+    });
   }
+}
 
-  async pointer(point) {
-    await this.page.send("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", clickCount: 1});
-    await this.page.send("Input.dispatchMouseEvent", {type: "mouseReleased", ...point, button: "left", clickCount: 1});
-  }
+async function setUpTrial(page, mode, context, timeout) {
+  await page.navigate();
+  await page.until(ready, timeout);
+  await page.evaluate(`(() => {
+    const menu = document.querySelector("#context");
+    menu.value = ${JSON.stringify(context)};
+    menu.dispatchEvent(new Event("change", {bubbles: true}));
+    document.querySelector("#mode-${mode}").click();
+    window.scrollTo(0, 0);
+  })()`);
+  await page.until(ready, timeout);
+}
 
-  async control(selector, counted = true) {
-    if (counted && !this.spend(this.persona.action_ms)) return false;
-    const point = await this.page.evaluate(`(() => {
-      const control = document.querySelector(${JSON.stringify(selector)});
-      if (!control || control.disabled) return null;
-      control.scrollIntoView({block: "nearest"});
-      const r = control.getBoundingClientRect();
-      const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
-      return control.contains(document.elementFromPoint(x, y)) ? {x, y} : null;
-    })()`);
-    if (!point) throw new Error(`Control is unavailable: ${selector}`);
-    await this.pointer(point);
-    return true;
-  }
+async function storedMetrics(page, delivered, mode, context) {
+  if (delivered === null) return null;
+  const saved = await page.until(`(() => {
+    const status = document.querySelector("#save-status").textContent;
+    return status === "내 이야기에 저장했어요." ? "saved" :
+      status.startsWith("저장하지 못했어요.") && "save_failed";
+  })()`);
+  if (saved !== "saved") return null;
+  const record = await page.evaluate(`fetch("/api/history", {headers: {"X-Profile-ID": localStorage.getItem("aac.profile")}})
+    .then(async (response) => (await response.json()).messages[0])`);
+  assert.equal(record.sentence, delivered);
+  assert.equal(record.mode, mode);
+  assert.equal(record.context, context);
+  assert.ok(record.cards_seen > 0);
+  return record;
+}
 
-  async waitForBoard() {
-    await this.page.until('document.querySelector("#symbols")?.getAttribute("aria-busy") === "false"', this.timeout);
-    this.sources.add(await this.page.evaluate(`(() => {
-      const caption = document.querySelector("#source").textContent.split(" · ")[0];
+async function runTrial(page, infer, task, persona, evidence, mode, maxTurns, timeout, saveScreen) {
+  await setUpTrial(page, mode, task.context, timeout);
+  const trace = [], sources = new Set(), noticed = new Set();
+  let decisionMs = 0, delivered = null, outcome = "turn_limit";
+  const started = performance.now();
+  for (let turn = 1; turn <= maxTurns; turn += 1) {
+    await page.until(ready, timeout);
+    await page.evaluate(frame);
+    sources.add(await page.evaluate(`(() => {
+      const caption = document.querySelector("#source").textContent;
       if (caption === "내 기기 AI 추천") return "local_llm";
-      if (caption === "기본 그림판") return "static";
+      if (caption.startsWith("기본 그림판")) return "static";
       if (caption === "연결 확인 필요") return "connection_error";
       return document.querySelector("#recommend-notice").textContent ? "fallback" : "rules";
     })()`));
+    const observation = await page.evaluate(`(${annotateScreen})()`);
+    let result;
+    try {
+      result = await page.send("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
+    } finally {
+      await page.evaluate('document.querySelector("#aac-eval-markers")?.remove()');
+    }
+    const screenshot = result.data;
+    const screenshotPath = await saveScreen?.(mode, persona.id, task.id, turn, screenshot);
+    const decisionStart = performance.now();
+    const decision = checkedDecision(await infer({
+      schema: actionSchema, prompt: actingPrompt(task, persona, evidence, trace), screenshot,
+    }), observation.targets);
+    const elapsed = Math.round(performance.now() - decisionStart);
+    decisionMs += elapsed;
+    for (const card of decision.noticed) noticed.add(card);
+    const {noticed: cards, ...event} = decision;
+    trace.push({...event, noticed_cards: cards, decision_ms: elapsed, ...(screenshotPath ? {screenshot: screenshotPath} : {})});
+    if (decision.action === "stop" && !decision.rejected) { outcome = "agent_stopped"; break; }
+    await perform(page, decision, observation);
+    await page.evaluate(frame);
+    delivered = await page.evaluate('document.querySelector("#output-dialog").open ? document.querySelector("#output-text").textContent.trim() : null');
+    if (delivered) { outcome = "delivered"; break; }
   }
-
-  async scan(selector, target) {
-    const name = selector === board ? "board" : "all_vocabulary";
-    if (selector === board) {
-      await this.page.evaluate('document.querySelector("#symbols").scrollIntoView({block: "start"})');
-    }
-    const inspected = new Set();
-    const panel = JSON.stringify(selector);
-    for (;;) {
-      await this.page.evaluate(frame);
-      const cards = await this.page.evaluate(`(${visibleCards})(${panel})`);
-      const labels = [];
-      let match;
-      for (const card of cards) {
-        if (inspected.has(card.id)) continue;
-        if (!this.spend(this.persona.inspect_ms_per_card)) break;
-        inspected.add(card.id);
-        labels.push(card.label);
-        this.cardsInspected += 1;
-        if (card.label === target) { match = card; break; }
-      }
-      if (labels.length) this.trace.push({action: "inspect", surface: name, labels});
-      if (match) {
-        const neighbor = cards.filter((card) => card.id !== match.id)
-          .sort((a, b) => Math.hypot(a.x - match.x, a.y - match.y) - Math.hypot(b.x - match.x, b.y - match.y))[0];
-        return {match, neighbor};
-      }
-      if (this.exhausted || !await this.page.evaluate(`(${scrollPanel})(${panel}, false)`)) return null;
-      if (!this.spend(this.persona.action_ms)) return null;
-      await this.page.evaluate(`(${scrollPanel})(${panel}, true)`);
-      this.trace.push({action: "scroll", surface: name});
-    }
-  }
-
-  async find(target) {
-    await this.waitForBoard();
-    let cards = await this.scan(board, target);
-    if (cards || this.exhausted) return cards;
-    if (await this.page.evaluate('!document.querySelector("#refresh").disabled')) {
-      if (!await this.control("#refresh")) return null;
-      this.trace.push({action: "next_board"});
-      await this.waitForBoard();
-      cards = await this.scan(board, target);
-      if (cards || this.exhausted) return cards;
-    }
-    if (!await this.control("#all-open")) return null;
-    this.trace.push({action: "open_all_vocabulary"});
-    return await this.scan(fullBoard, target);
-  }
-
-  async closeVocabulary() {
-    const open = await this.page.evaluate('document.querySelector("#all-dialog").open');
-    return !open || await this.control('[data-close="all-dialog"]');
-  }
-
-  async choose(target) {
-    const slip = this.random() < this.persona.mis_tap_probability;
-    let cards = await this.find(target);
-    if (cards && slip && cards.neighbor) {
-      if (!this.spend(this.persona.action_ms)) return false;
-      await this.pointer({x: cards.neighbor.x, y: cards.neighbor.y});
-      this.misTaps += 1;
-      this.trace.push({action: "mis_tap", label: cards.neighbor.label});
-      if (!await this.closeVocabulary() || !await this.control("#undo")) return false;
-      this.trace.push({action: "undo"});
-      cards = await this.find(target);
-    }
-    if (!cards || !this.spend(this.persona.action_ms)) {
-      await this.closeVocabulary();
-      return false;
-    }
-    await this.pointer({x: cards.match.x, y: cards.match.y});
-    this.trace.push({action: "select", label: target});
-    assert.equal(await this.page.evaluate(
-      'document.querySelector("#selected .token:last-of-type")?.lastElementChild.previousElementSibling.textContent',
-    ), target, "The visible target must be added to the composer.");
-    return await this.closeVocabulary();
-  }
-
-  async compose() {
-    for (const target of this.task.goal_cards) {
-      if (!await this.choose(target)) {
-        this.trace.push({action: this.exhausted ? "budget_exhausted" : "target_unavailable", label: target});
-        break;
-      }
-    }
-    if (this.exhausted || !await this.page.evaluate('!document.querySelector("#generate").disabled')) {
-      return {sentence: "", completed_ms: null};
-    }
-    if (!await this.control("#generate")) return {sentence: "", completed_ms: null};
-    const status = await this.page.until(`!document.querySelector("#sentence-panel").hidden ? "ready" :
-      !document.querySelector("#error").hidden && "generate_failed"`, this.timeout);
-    if (status !== "ready") return {sentence: "", completed_ms: null};
-    const preview = await this.page.evaluate('document.querySelector("#sentence").value');
-    // The agent can decline a clearly wrong draft. Keyboard writing is disabled in these personas.
-    if (!this.spend(this.persona.action_ms) || rateIntent(this.task, preview).score < 3 || !await this.control("#confirm")) {
-      const reason = this.exhausted ? "budget_exhausted" : "draft_does_not_match_intent";
-      this.trace.push({action: "not_confirmed", reason, draft: preview});
-      return {sentence: "", completed_ms: null};
-    }
-    const sentence = await this.page.until('document.querySelector("#output-dialog").open && document.querySelector("#output-text").textContent');
-    return {sentence, completed_ms: Math.round(performance.now() - this.started)};
-  }
-
-  async run(mode) {
-    await this.page.navigate();
-    await this.waitForBoard();
-    if (mode === "static") await this.control("#mode-static", false);
-    if (this.task.context !== "any") {
-      await this.page.evaluate(`(() => {
-        const context = document.querySelector("#context");
-        context.value = ${JSON.stringify(this.task.context)};
-        context.dispatchEvent(new Event("change", {bubbles: true}));
-      })()`);
-      await this.waitForBoard();
-      // Begin the measured trial on the requested context with a fresh composer and exposure counter.
-      await this.control(`#mode-${mode}`, false);
-    }
-    this.sources.clear();
-    await this.waitForBoard();
-    this.started = performance.now();
-    const {sentence, completed_ms} = await this.compose();
-    const observed_ms = Math.round(performance.now() - this.started);
-    let record = null;
-    if (sentence) {
-      const saved = await this.page.until(`document.querySelector("#save-status").textContent === "내 이야기에 저장했어요." ? "saved" :
-        document.querySelector("#save-status").textContent.startsWith("저장하지 못했어요.") && "save_failed"`);
-      if (saved === "saved") {
-        // Read persisted metrics after the trial, independently of any agent decision.
-        record = await this.page.evaluate(`fetch("/api/history", {headers: {"X-Profile-ID": localStorage.getItem("aac.profile")}})
-          .then(async (response) => (await response.json()).messages[0])`);
-        assert.equal(record.sentence, sentence);
-        assert.equal(record.mode, mode);
-        assert.equal(record.context, this.task.context);
-        assert.equal(record.cards_seen > 0, true, "The app must persist visible card exposures.");
-      }
-    }
-    return {
-      persona: this.persona.id, task: this.task.id, mode, intended_sentence: this.task.intent,
-      delivered_sentence: sentence || null, ...rateIntent(this.task, sentence),
-      cards_inspected: this.cardsInspected, app_cards_seen: record?.cards_seen ?? null,
-      completion_ms: completed_ms, attempt_ms: observed_ms, app_elapsed_ms: record?.elapsed_ms ?? null,
-      simulated_behavior_ms: this.behaviorMs, mis_taps: this.misTaps,
-      saved: Boolean(record), board_sources: [...this.sources], trace: this.trace,
-    };
-  }
+  const observedMs = Math.round(performance.now() - started);
+  const exposed = await page.evaluate("cardExposure.total");
+  const record = await storedMetrics(page, delivered, mode, task.context);
+  const score = await rateDelivery(infer, task, persona, delivered);
+  return {
+    persona: persona.id, task: task.id, mode, outcome, intended_sentence: task.intent,
+    delivered_sentence: delivered, ...score, app_cards_seen: record?.cards_seen ?? null,
+    viewport_card_exposures: record?.cards_seen ?? exposed, model_reported_unique_cards: noticed.size,
+    completion_ms: delivered ? observedMs : null, attempt_ms: observedMs, decision_ms: decisionMs,
+    elapsed_without_model_ms: Math.max(0, observedMs - decisionMs), app_elapsed_ms: record?.elapsed_ms ?? null,
+    saved: Boolean(record), board_sources: [...sources], trace,
+  };
 }
 
-const average = (values) => values.length ? Math.round(100 * values.reduce((a, b) => a + b, 0) / values.length) / 100 : null;
+const mean = (values) => values.length ? Math.round(100 * values.reduce((a, b) => a + b, 0) / values.length) / 100 : null;
 
 function summarize(results) {
   return Object.fromEntries(modes.flatMap((mode) => {
-    const cases = results.filter((result) => result.mode === mode);
-    if (!cases.length) return [];
-    return [[mode, {
-      attempts: cases.length, completed: cases.filter((row) => row.delivered_sentence).length,
-      fully_expressed: cases.filter((row) => row.score === 5).length,
-      mean_score_out_of_5: average(cases.map((row) => row.score)),
-      mean_cards_inspected: average(cases.map((row) => row.cards_inspected)),
-      mean_app_cards_seen_saved: average(cases.map((row) => row.app_cards_seen).filter((value) => value !== null)),
-      mean_completion_ms_completed: average(cases.map((row) => row.completion_ms).filter((value) => value !== null)),
-      mean_simulated_behavior_ms: average(cases.map((row) => row.simulated_behavior_ms)),
-    }]];
+    const rows = results.filter((row) => row.mode === mode);
+    return rows.length ? [[mode, {
+      attempts: rows.length, completed: rows.filter((row) => row.outcome === "delivered").length,
+      fully_expressed: rows.filter((row) => row.score === 5).length,
+      mean_score_out_of_5: mean(rows.map((row) => row.score)),
+      mean_viewport_card_exposures: mean(rows.map((row) => row.viewport_card_exposures)),
+      mean_model_reported_unique_cards: mean(rows.map((row) => row.model_reported_unique_cards)),
+      mean_completion_ms_completed: mean(rows.map((row) => row.completion_ms).filter((value) => value !== null)),
+      mean_decision_ms: mean(rows.map((row) => row.decision_ms)),
+    }]] : [];
   }));
 }
 
 async function main() {
   const {values} = parseArgs({options: {
-    output: {type: "string"}, seed: {type: "string", default: "42"}, persona: {type: "string"},
-    task: {type: "string"}, mode: {type: "string"}, "local-manifest": {type: "string"},
-    help: {type: "boolean"},
+    output: {type: "string"}, screenshots: {type: "string"}, model: {type: "string", default: "gpt-6.1-terra"},
+    persona: {type: "string"}, task: {type: "string"}, mode: {type: "string"},
+    "local-manifest": {type: "string"}, "max-turns": {type: "string", default: "24"}, help: {type: "boolean"},
   }});
   if (values.help) {
-    console.log("CHROMIUM_PATH=/path/to/chrome node scripts/evaluate-agent.mjs [--output FILE] [--seed INT] [--persona ID] [--task ID] [--mode adaptive|static] [--local-manifest FILE]");
+    console.log("CHROMIUM_PATH=/path/to/chrome node scripts/evaluate-agent.mjs [--output FILE] [--screenshots DIR] [--model MODEL] [--persona ID] [--task ID] [--mode adaptive|static] [--max-turns N] [--local-manifest FILE]");
     return;
   }
-  const seed = Number(values.seed);
-  if (!/^\d+$/.test(values.seed) || !Number.isSafeInteger(seed) || seed > 0xFFFFFFFF) {
-    throw new Error("Seed must be a 32-bit unsigned integer.");
-  }
+  const maxTurns = Number(values["max-turns"]);
+  if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 100) throw new Error("max-turns must be 1–100.");
   const corpus = JSON.parse(await readFile(new URL("../data/agent-scenarios.json", import.meta.url), "utf8"));
   const personas = corpus.personas.filter(({id}) => !values.persona || id === values.persona);
   const tasks = corpus.tasks.filter(({id}) => !values.task || id === values.task);
   const selectedModes = modes.filter((mode) => !values.mode || mode === values.mode);
   if (!personas.length || !tasks.length || !selectedModes.length) throw new Error("Unknown persona, task, or mode.");
   const localManifest = values["local-manifest"];
-  const results = await withBrowser(async (page) => {
-    const rows = [];
-    for (const persona of personas) {
-      for (const task of tasks) {
-        for (const mode of selectedModes) {
-          const agent = new UserAgent(page, persona, task, seed, localManifest ? 140000 : 10000);
-          rows.push(await agent.run(mode));
-        }
-      }
+  async function saveScreen(mode, persona, task, turn, screenshot) {
+    const folder = `${values.screenshots}/${mode}-${persona}-${task}`;
+    await mkdir(folder, {recursive: true});
+    const path = `${folder}/${String(turn).padStart(2, "0")}.png`;
+    await writeFile(path, Buffer.from(screenshot, "base64"));
+    return path;
+  }
+  const report = {
+    kind: "synthetic-aac-vision-llm-evaluation", actor_and_rater_model: values.model,
+    app_recommendation_engine: localManifest ? "local-model-with-fallback" : "rules",
+    viewport: {width: 1365, height: 1000}, max_turns: maxTurns, planned_trials: personas.length * tasks.length * selectedModes.length,
+    evidence: corpus.evidence, personas, results: [],
+  };
+  const writeReport = async () => {
+    report.summary = summarize(report.results);
+    await mkdir(dirname(values.output), {recursive: true});
+    await writeFile(values.output, JSON.stringify(report, null, 2) + "\n");
+  };
+  await withVisionModel(values.model, (infer) => withBrowser(async (page) => {
+    for (const persona of personas) for (const task of tasks) for (const mode of selectedModes) {
+      console.error(`AAC trial: ${persona.id} / ${task.id} / ${mode}`);
+      report.results.push(await runTrial(page, infer, task, persona, corpus.evidence, mode,
+        maxTurns, localManifest ? 140000 : 10000, values.screenshots ? saveScreen : null));
+      if (values.output) await writeReport();
     }
     assert.deepEqual(page.errors, []);
-    return rows;
-  }, {localManifest});
-  const result = {
-    kind: "synthetic-aac-browser-evaluation", seed, engine: localManifest ? "local-model-with-fallback" : "rules",
-    viewport: {width: 1365, height: 1000},
-    sources: corpus.sources, personas, summary: summarize(results), results,
-  };
-  const json = JSON.stringify(result, null, 2) + "\n";
-  if (values.output) {
-    await mkdir(dirname(values.output), {recursive: true});
-    await writeFile(values.output, json);
-    console.log(JSON.stringify(result.summary, null, 2));
-  } else console.log(json);
+  }, {localManifest}));
+  if (values.output) console.log(JSON.stringify(report.summary, null, 2));
+  else console.log(JSON.stringify({...report, summary: summarize(report.results)}, null, 2));
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
