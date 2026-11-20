@@ -9,7 +9,7 @@ from unittest.mock import patch
 from aac.local_model import LocalMLXProvider, configured_local_provider, local_messages, parse_ids
 from aac.prediction import recommend
 from aac.sentences import generate_sentence
-from aac.server import Application
+from aac.service import AacService
 from aac.storage import Store
 from scripts.local_dataset import prepare_splits, prompt_key
 from scripts.synthetic_data import synthetic_records
@@ -44,11 +44,11 @@ class LocalModelTests(unittest.TestCase):
     def test_local_inference_does_not_require_cloud_opt_in(self):
         store = Store(self.path / "test.sqlite3")
         profile = store.create_profile("나")
-        app = Application(store, local_provider=self.provider)
+        app = AacService(store, local_provider=self.provider)
         with patch.object(self.provider, "_generate", return_value='{"ids":["bread"]}'):
-            result = app.handle("POST", "/api/recommend", {"selected": ["eat"]}, profile["id"])
+            result = app.recommend(profile["id"], ["eat"])
         self.assertEqual(result["source"], "local_llm")
-        bootstrap = app.handle("GET", "/api/bootstrap", {}, "")
+        bootstrap = app.bootstrap()
         self.assertFalse(bootstrap["cloud_available"])
         self.assertTrue(bootstrap["local_model_available"])
 

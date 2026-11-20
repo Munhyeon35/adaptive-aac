@@ -2,10 +2,10 @@
 
 ## 브라우저 비전 LLM 사용자 평가
 
-Python 3.11+, Node 20+, Chrome 또는 Chromium, 로그인된 Codex CLI가 필요합니다. 평가 실행 시 지정된 모델에 임시 브라우저의 합성 과제 화면과 연구 요약을 보냅니다. 실제 프로필과 사용 기록은 읽지 않습니다.
+Python 3.11+, Node 20+, Chrome 또는 Chromium, 로그인된 Codex CLI가 필요합니다. Python 환경에는 `requirements-dev.txt`를 설치합니다. 평가 실행 시 지정된 모델에 임시 브라우저의 합성 과제 화면과 연구 요약을 보냅니다. 실제 프로필과 사용 기록은 읽지 않습니다.
 
 ```bash
-CHROMIUM_PATH=/absolute/path/to/chrome node scripts/evaluate-agent.mjs --persona direct_touch_motor --task food_request --output artifacts/agent-evaluation.json
+PYTHON=.venv/bin/python CHROMIUM_PATH=/absolute/path/to/chrome node scripts/evaluate-agent.mjs --persona direct_touch_motor --task food_request --output artifacts/agent-evaluation.json
 ```
 
 필터 없이 `make evaluate-agent`를 실행하면 두 사용자 유형과 일곱 의도를 기본 그림판과 맞춤 추천에서 비교합니다. `--mode`, `--max-turns`, `--model`, `--screenshots`로 단일 모드, 행동 한도, 모델, 관찰 화면 저장을 지정할 수 있습니다. 평가가 길어질 수 있으며 `--output`은 매 시도가 끝날 때마다 갱신됩니다. `PYTHON`과 `AAC_CODEX`로 실행 파일을 지정할 수 있습니다.

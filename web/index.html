@@ -15,11 +15,12 @@
   <div class="app-shell">
     <header class="header">
       <a class="brand" href="/" aria-label="온말 처음 화면"><span class="brand-icon" aria-hidden="true">온</span><span>온말<small>나의 마음을 전해요</small></span></a>
-      <div class="header-actions"><span class="local-tag"><i></i> 나만의 소통 공간</span><button id="history-open" class="quiet">지난 이야기</button><button id="settings-open" class="quiet" aria-label="설정 열기">⚙ <span>설정</span></button></div>
+      <div class="header-actions"><span class="local-tag"><i></i> 나만의 소통 공간</span><button id="history-open" class="quiet">지난 이야기</button><button id="settings-open" class="quiet" aria-label="설정 열기">⚙ <span>설정</span></button><button id="account-open" class="secondary account-button" type="button" hidden>로그인</button></div>
     </header>
     <main>
       <section class="intro"><div><p class="eyebrow">작은 선택으로, 더 가까이</p><h1>어떤 이야기를 하고 싶나요?</h1><p>그림을 하나씩 골라 마음을 전해 보세요.</p></div><div class="intro-mark" aria-hidden="true">나의 말,<br><strong>나의 속도로.</strong><span>✳</span></div></section>
       <div id="error" class="notice error" role="alert" hidden></div>
+      <div id="account-notice" class="notice success" role="status" hidden></div>
       <div id="status" class="sr-only" role="status" aria-live="polite"></div>
       <div class="workspace">
         <section id="board" class="board" aria-labelledby="board-title" tabindex="-1">
@@ -48,6 +49,23 @@
   <dialog id="all-dialog" aria-labelledby="all-title"><div class="dialog-heading"><div><p class="eyebrow">자유롭게 찾아보세요</p><h2 id="all-title">전체 그림</h2></div><button class="close quiet" data-close="all-dialog" aria-label="전체 그림 닫기">✕</button></div><p class="all-help">그림을 눌러 선택해 보세요. 아래 버튼으로 다른 그림을 볼 수 있어요.</p><div id="all-symbols" class="symbol-grid compact" aria-label="전체 그림 목록"></div><nav class="all-pager" aria-label="전체 그림 페이지 이동"><button id="all-prev" class="secondary" type="button" disabled>← 이전 그림</button><span id="all-page-label" tabindex="-1" aria-live="polite">1 / 1 페이지</span><button id="all-next" class="secondary" type="button">다음 그림 →</button></nav><p id="all-count" class="subtle" role="status"></p></dialog>
   <dialog id="output-dialog" aria-labelledby="output-title"><div class="dialog-heading"><h2 id="output-title">내 마음을 전해요</h2><button class="close quiet" data-close="output-dialog" aria-label="전달 화면 닫기">✕</button></div><div id="output-symbols" aria-hidden="true"></div><p id="output-text" class="output-text"></p><p id="save-status" class="subtle" role="status"></p><div class="output-actions"><button id="speak" class="primary">♪ 소리로 읽기</button><button id="stop-speech" class="secondary">읽기 멈추기</button><button id="new-message" class="quiet">새 이야기 시작</button></div><p id="speech-status" class="subtle" role="status"></p></dialog>
   <dialog id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><h2 id="settings-title">나에게 맞추기</h2><button class="close quiet" data-close="settings-dialog" aria-label="설정 닫기">✕</button></div><form id="settings-form"><label for="profile-name">나의 이름</label><input id="profile-name" maxlength="30" required><label class="check-label"><input id="large-text" type="checkbox">글자와 그림을 더 크게 보기</label><label class="check-label"><input id="cloud-enabled" type="checkbox">클라우드 AI 추천 사용</label><p id="cloud-info" class="subtle">사용하면 선택한 그림, 상황, 최근 확정한 그림 순서를 OpenAI로 보내 추천을 받아요. 이름과 직접 쓴 문장은 보내지 않아요.</p><button class="primary full" type="submit">설정 저장</button><p id="settings-status" role="status" class="subtle"></p></form><div class="settings-data"><h3>내 이야기 기록</h3><p class="subtle">확정한 이야기는 이 컴퓨터에 저장되어 다음 추천에 반영돼요.</p><button id="export" class="secondary">기록 내려받기</button><button id="delete-history" class="quiet danger">기록 지우기</button><div id="delete-confirm" hidden><p>저장된 이야기와 학습된 사용 빈도를 모두 지울까요?</p><button id="delete-confirm-yes" class="secondary danger">모두 지우기</button><button id="delete-cancel" class="quiet">취소</button></div></div></dialog>
+  <dialog id="account-dialog" aria-labelledby="account-title">
+    <div class="dialog-heading"><div><p class="eyebrow" id="account-eyebrow">온말 계정</p><h2 id="account-title">로그인하고 이어서 이야기해요</h2></div><button class="close quiet" type="button" data-close="account-dialog" aria-label="계정 창 닫기">✕</button></div>
+    <div id="login-view">
+      <ul class="account-benefits">
+        <li>다른 기기에서도 내 이야기 기록과 맞춤 추천을 이어서 쓸 수 있어요.</li>
+        <li>처음 로그인하면 이 기기에서 확정한 이야기도 계정으로 함께 옮겨져요.</li>
+      </ul>
+      <button id="google-login" class="google-button full" type="button"><svg class="google-mark" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg><span id="google-login-label">Google 계정으로 로그인</span></button>
+      <p class="subtle account-note">로그인하지 않아도 지금처럼 모든 기능을 그대로 쓸 수 있어요.<br>Google에서는 이름과 이메일만 받고, 비밀번호는 저장하지 않아요.</p>
+    </div>
+    <div id="account-view" hidden>
+      <div class="account-card"><span id="account-avatar" class="avatar large-avatar" aria-hidden="true"></span><div><p id="account-name" class="account-name"></p><p id="account-email" class="account-email"></p></div></div>
+      <p class="subtle">이야기 기록과 맞춤 추천이 이 계정에 저장되고 있어요. 로그아웃하면 이 기기에서는 새 사용자로 시작해요.</p>
+      <button id="logout" class="secondary full" type="button">로그아웃</button>
+    </div>
+    <p id="account-status" class="subtle" role="status" aria-live="polite"></p>
+  </dialog>
   <dialog id="history-dialog" aria-labelledby="history-title"><div class="dialog-heading"><div><p class="eyebrow">내가 전한 마음들</p><h2 id="history-title">지난 이야기</h2></div><button class="close quiet" data-close="history-dialog" aria-label="지난 이야기 닫기">✕</button></div><div id="history-list"></div><details><summary>선택 방식별 기록 보기</summary><p class="subtle">확정한 메시지의 평균입니다. 메시지마다 작성 난이도가 다를 수 있어요. 본 그림 수는 화면에 노출되거나 선택한 카드로 셉니다. 작성 시간은 첫 탐색이나 선택부터 전달하기까지예요.</p><div id="stats"></div></details></dialog>
 </body>
 </html>

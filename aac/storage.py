@@ -1,11 +1,17 @@
 """Local SQLite persistence. Store only explicitly confirmed utterances."""
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
+import secrets
 import sqlite3
 import uuid
+
+
+class ProfileNotFound(LookupError):
+    pass
 
 
 class Store:
@@ -26,11 +32,30 @@ class Store:
                     elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL, cards_seen INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS messages_by_profile ON messages(profile_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS user_identities (
+                    provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id),
+                    PRIMARY KEY (provider, subject)
+                );
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+                    created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS oauth_states (
+                    state_hash TEXT PRIMARY KEY, verifier TEXT NOT NULL, profile_id TEXT, created_at TEXT NOT NULL
+                );
             """)
-            # Serialize the schema check and migration if multiple processes open an old store.
+            # Serialize both migrations for concurrent openers of an existing database.
             db.execute("BEGIN IMMEDIATE")
             if "cards_seen" not in {row["name"] for row in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN cards_seen INTEGER")
+            # Databases created before accounts existed gain the link column in place.
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(profiles)")}
+            if "user_id" not in columns:
+                db.execute("ALTER TABLE profiles ADD COLUMN user_id TEXT REFERENCES users(id)")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS profiles_by_user ON profiles(user_id) WHERE user_id IS NOT NULL")
 
     @contextmanager
     def connect(self):
@@ -43,17 +68,17 @@ class Store:
         finally:
             db.close()
 
-    def create_profile(self, name):
+    def create_profile(self, name, user_id=None):
         profile_id = str(uuid.uuid4())
         with self.connect() as db:
-            db.execute("INSERT INTO profiles(id, name) VALUES (?, ?)", (profile_id, name))
+            db.execute("INSERT INTO profiles(id, name, user_id) VALUES (?, ?, ?)", (profile_id, name, user_id))
         return self.profile(profile_id)
 
     def profile(self, profile_id):
         with self.connect() as db:
             row = db.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
         if not row:
-            raise LookupError("사용자 정보를 찾을 수 없어요. 페이지를 새로 열어 주세요.")
+            raise ProfileNotFound("사용자 정보를 찾을 수 없어요. 페이지를 새로 열어 주세요.")
         return dict(row, cloud_enabled=bool(row["cloud_enabled"]))
 
     def update_profile(self, profile_id, name, cloud_enabled):
@@ -92,3 +117,90 @@ class Store:
                 round(avg(cards_seen), 2) AS average_cards_seen, count(cards_seen) AS measured_messages
                 FROM messages WHERE profile_id=? GROUP BY mode""", (profile_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    # Accounts. Tokens are stored only as SHA-256 hashes, so a leaked database cannot replay sessions.
+
+    def save_oauth_state(self, state, verifier, profile_id):
+        with self.connect() as db:
+            db.execute("DELETE FROM oauth_states WHERE created_at < ?", (_ago(minutes=10),))
+            db.execute("INSERT INTO oauth_states(state_hash, verifier, profile_id, created_at) VALUES (?, ?, ?, ?)",
+                       (token_hash(state), verifier, profile_id, _now()))
+
+    def pop_oauth_state(self, state):
+        """Return the pending login once; a reused or expired state yields None."""
+        with self.connect() as db:
+            key = token_hash(state)
+            row = db.execute("SELECT verifier, profile_id FROM oauth_states WHERE state_hash=? AND created_at >= ?",
+                             (key, _ago(minutes=10))).fetchone()
+            db.execute("DELETE FROM oauth_states WHERE state_hash=?", (key,))
+        return dict(row) if row else None
+
+    def login_identity(self, provider, subject, email, name, anonymous_profile_id=None):
+        """Find or create the account for an external identity and return (user, profile)."""
+        with self.connect() as db:
+            row = db.execute("SELECT user_id FROM user_identities WHERE provider=? AND subject=?", (provider, subject)).fetchone()
+            if row:
+                user_id = row["user_id"]
+                db.execute("UPDATE users SET email=?, name=? WHERE id=?", (email, name, user_id))
+            else:
+                user_id = str(uuid.uuid4())
+                db.execute("INSERT INTO users(id, email, name, created_at) VALUES (?, ?, ?, ?)", (user_id, email, name, _now()))
+                db.execute("INSERT INTO user_identities(provider, subject, user_id) VALUES (?, ?, ?)", (provider, subject, user_id))
+            profile = db.execute("SELECT id FROM profiles WHERE user_id=?", (user_id,)).fetchone()
+            if not profile and anonymous_profile_id:
+                # First login keeps the history the person built before signing in.
+                db.execute("UPDATE profiles SET user_id=? WHERE id=? AND user_id IS NULL", (user_id, anonymous_profile_id))
+                profile = db.execute("SELECT id FROM profiles WHERE user_id=?", (user_id,)).fetchone()
+            if not profile:
+                profile_id = str(uuid.uuid4())
+                db.execute("INSERT INTO profiles(id, name, user_id) VALUES (?, ?, ?)", (profile_id, name[:30] or "나", user_id))
+            else:
+                profile_id = profile["id"]
+        return self.user(user_id), self.profile(profile_id)
+
+    def user(self, user_id):
+        with self.connect() as db:
+            row = db.execute("SELECT id, email, name FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            raise ProfileNotFound("로그인 정보를 찾을 수 없어요. 다시 로그인해 주세요.")
+        return dict(row)
+
+    def profile_for_user(self, user_id):
+        with self.connect() as db:
+            row = db.execute("SELECT id FROM profiles WHERE user_id=?", (user_id,)).fetchone()
+        if not row:
+            raise ProfileNotFound("사용자 정보를 찾을 수 없어요. 다시 로그인해 주세요.")
+        return self.profile(row["id"])
+
+    def create_session(self, user_id, days=30):
+        token = secrets.token_urlsafe(32)
+        with self.connect() as db:
+            db.execute("DELETE FROM sessions WHERE expires_at < ?", (_now(),))
+            db.execute("INSERT INTO sessions(token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                       (token_hash(token), user_id, _now(), _ago(days=-days)))
+        return token
+
+    def session_user_id(self, token):
+        if not token:
+            return None
+        with self.connect() as db:
+            row = db.execute("SELECT user_id FROM sessions WHERE token_hash=? AND expires_at > ?",
+                             (token_hash(token), _now())).fetchone()
+        return row["user_id"] if row else None
+
+    def delete_session(self, token):
+        if token:
+            with self.connect() as db:
+                db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(token),))
+
+
+def token_hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ago(**delta):
+    return (datetime.now(timezone.utc) - timedelta(**delta)).isoformat()
