@@ -149,9 +149,15 @@ python3 -m scripts.prepare_training data/scenarios.json --output artifacts/synth
 CHROMIUM_PATH=/absolute/path/to/chromium node scripts/browser-test.mjs
 ```
 
-브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 검색, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다(예: `PYTHON=.venv/bin/python`). 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
+브라우저 테스트는 CDP 파이프와 임시 SQLite DB를 사용하며, 실제 HTTP 처리기를 통해 화면 선택→문장 생성→확정→이력, 전체 어휘 페이지 이동, 취소, 기본 그림판, 모바일 너비, 설정과 삭제를 검사하고 `artifacts/`에 화면을 저장합니다. Python 경로는 `PYTHON`으로 지정할 수 있습니다(예: `PYTHON=.venv/bin/python`). 브라우저 실행 권한이 제한된 환경에서는 실행되지 않을 수 있습니다.
 
-`data/scenarios.json`은 손으로 만든 **개발용 합성 데이터 16건**입니다. 평가 수치는 6개 그림 단위 탐색의 시뮬레이션이며 실제 사용자의 성능 향상을 의미하지 않습니다. 사용자 평가 설계와 계산 가정은 [평가·학습 안내](docs/evaluation.md)를 확인하세요.
+비전 LLM은 AAC 연구를 참고한 두 사용자 유형으로 실제 브라우저 화면을 보고 카드 선택과 탐색을 판단합니다. 맞춤 추천과 기본 그림판에서 카드 노출 수, 전달 시간, 의도 전달 점수(5점 만점)를 기록합니다. 실행에는 로그인된 Codex CLI가 필요합니다.
+
+```bash
+PYTHON=.venv/bin/python CHROMIUM_PATH=/absolute/path/to/chromium make evaluate-agent
+```
+
+앱에서는 `지난 이야기`와 JSON 내보내기에서 확정한 메시지의 카드 노출 수와 작성 시간을 확인할 수 있습니다. 합성 사용자 설정, 채점 기준, 로컬 Qwen 평가 실행법은 [평가·학습 안내](docs/evaluation.md)를 확인하세요.
 
 ## 학습 데이터와 파인튜닝
 
